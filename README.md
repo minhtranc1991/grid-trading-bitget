@@ -124,13 +124,13 @@ Sharpe OOS gộp (grid phẳng) [CI 95%] vs B&H: BTC −0.37 [−2.02, 1.33] vs 
 **Giới hạn của Bitget (docs help-center, đã đọc 5 bài)**
 - Tối đa 50 bot/tài khoản (mọi loại).
 - **Docs KHÔNG nêu** số lưới tối thiểu/tối đa, bước % tối thiểu, lãi/lưới tối thiểu, vốn tối thiểu, hay giới hạn theo cặp. Minimum Investment chỉ hiện trong UI theo cặp và tham số. → `MAX_GRIDS` là tham số "cần xác minh"; cách xác minh: mở màn hình tạo bot trong app, đọc Min Investment và số lưới tối đa của từng cặp.
-- Bot chỉ mở lệnh khi lãi lưới > phí; ở range hẹp + nhiều lưới dùng "interval matching" (ghép lệnh cách vài lưới) nên bot thật khác mô hình lưới thuần.
+- **Ràng buộc thiết kế:** dự án không mô hình hành vi riêng của bot khi range hẹp + nhiều lưới. Thay vào đó, tối ưu chỉ xét cấu hình có **bước nhỏ nhất ≥ 2·fee·hệ số an toàn** (mặc định 0.4% với phí 0.1%), áp ở mọi đường (sweep, walk-forward, DGT, khuyến nghị cuối); range hẹp chỉ qua được khi có ít lưới (bước = range / n), nên không có cấu hình hẹp-và-dày nào được tối ưu.
 - Position Grid: hệ thống tự chọn số lưới và range, không chỉnh tay (bot khác với bot ở đây).
 
 ## Giới hạn của kết quả
 
-- Dùng giá close → số lần cắt lưới bị ước lượng thấp (bảo thủ); dùng high/low sẽ lạc quan. Không mô hình queue/slippage/độ trễ/interval matching.
+- Dùng giá close → số lần cắt lưới bị ước lượng thấp (bảo thủ); dùng high/low sẽ lạc quan. Không mô hình queue/slippage/độ trễ.
 - Grid thuần không có kỳ vọng dương trên random walk (Chen et al.); kết quả tốt trên một giai đoạn có thể chỉ là drift/regime. Với 15 fold và một giai đoạn, CI rộng.
-- Lệnh khớp được mô phỏng ở đúng giá line khi giá close cắt qua; không có trượt giá, queue, độ trễ, hay "interval matching" của bot Bitget.
+- Lệnh khớp được mô phỏng ở đúng giá line khi giá close cắt qua; không có trượt giá, queue hay độ trễ.
 - PAXG, XAUT là token neo vàng: biến động thấp, phí/spread chi phối; cần kiểm tra thanh khoản thật. Không đòn bẩy.
 - Phí Bitget và giới hạn số lưới là giả định cần xác minh.

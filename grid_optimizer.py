@@ -214,6 +214,9 @@ def run_sweep(symbol, tf, df, window_days, fee):
     print("BOTTOM 5")
     print(res.tail(5).to_string(formatters=fmt))
     out = Path(__file__).parent / "results" / f"heatmap_{symbol[:-4]}.png"
+    meta = {"window_days": window_days, "fee": fee, "combos": total, "passed": len(res), "bh": bh,
+            "rows": res.to_dict("records")}
+    (out.parent / f"sweep_{symbol}.json").write_text(json.dumps(meta), encoding="utf-8")  # cho make_report.py
     heatmap(res, out, f"{symbol} Sharpe: dl x n ({window_days}d)")
     log.info("SWEEP %s B&H cửa sổ: sharpe=%.2f return=%+.1f%%; top1 sharpe=%.2f", symbol, bh["sharpe"], 100 * bh["return"], res.sharpe.iloc[0])
     log.info("SWEEP %s heatmap -> %s", symbol, out)

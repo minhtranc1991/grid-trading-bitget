@@ -144,7 +144,15 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>12. Lịch sử chạy (results/run.log)</h2>
+    <h2>12. STEP 8: Ý nghĩa thống kê &amp; độ nhạy</h2>
+    <p class="sub">Sharpe OOS gộp mọi fold (grid phẳng) với khoảng tin cậy 95% bằng block bootstrap (khối 1 ngày, 2000 lần). Deflated Sharpe trừ đi hiệu ứng thử nhiều tổ hợp.</p>
+    <div id="stats"></div>
+    <h2 style="font-size:15px;margin-top:20px">Độ nhạy với phí và timeframe (Sharpe OOS trung vị)</h2>
+    <div id="sens"></div>
+  </section>
+
+  <section class="card">
+    <h2>13. Lịch sử chạy (results/run.log)</h2>
     <div id="runs"></div>
     <details><summary>Log gốc</summary><pre id="rawlog"></pre></details>
   </section>
@@ -349,11 +357,27 @@ function renderWF() {
   }).join("");
 }
 
+function renderStats() {
+  const have = SYMS.filter((s) => D.stats[s]);
+  if (!have.length) { $("stats").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --stats</code> và <code>--sensitivity</code>, rồi <code>python make_report.py</code>.</p>`; return; }
+  const ci = (c) => `${c[1].toFixed(2)} [${c[0].toFixed(2)}, ${c[2].toFixed(2)}]`;
+  $("stats").innerHTML = `<table><tr><th>Cặp</th><th>Sharpe OOS grid</th><th>Sharpe B&amp;H</th><th>Hiệu (grid − B&amp;H)</th><th>PSR(0)</th><th>DSR</th><th>Số tổ hợp</th><th>Kết luận</th></tr>` +
+    have.map((s) => { const x = D.stats[s]; return `<tr><td>${s}</td><td>${ci(x.grid_ci)}</td><td>${ci(x.bh_ci)}</td><td>${ci(x.diff_ci)}</td><td>${x.psr0.toFixed(3)}</td><td>${x.dsr.toFixed(3)}</td><td>${x.n_trials}</td><td style="text-align:left">${x.verdict}</td></tr>`; }).join("") + "</table>" +
+    `<p class="note">Định dạng: điểm [CI 95%]. PSR(0) = xác suất Sharpe thật &gt; 0; DSR = xác suất Sharpe thật vượt ngưỡng sinh ra do chọn tốt nhất trong N tổ hợp (cần &gt; 0.95 mới đáng tin). Sharpe gộp khác trung vị fold ở các bảng trên.</p>`;
+  const sh = SYMS.filter((s) => D.sens[s]);
+  if (!sh.length) { $("sens").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py --sensitivity</code> (chậm, tải thêm nến 5m).</p>`; return; }
+  const labels = [...new Set(sh.flatMap((s) => D.sens[s].map((r) => r.kind + ":" + r.label)))];
+  const name = (l) => (l.startsWith("fee:") ? "Phí " + l.slice(4) : "Timeframe " + l.slice(3));
+  $("sens").innerHTML = `<table><tr><th>Cấu hình</th>${sh.map((s) => `<th>${s.replace("USDT", "")} phẳng / nhọn / B&amp;H</th>`).join("")}</tr>` +
+    labels.map((l) => `<tr><td>${name(l)}</td>` + sh.map((s) => { const r = D.sens[s].find((q) => q.kind + ":" + q.label === l); return r ? `<td>${r.f_oos_sharpe_median.toFixed(2)} / ${r.oos_sharpe_median.toFixed(2)} / ${r.bh_sharpe_median.toFixed(2)}</td>` : "<td>–</td>"; }).join("") + "</tr>").join("") + "</table>";
+}
+
 function renderSteps() {
   const done = D.progress.filter((p) => p.done).length;
   $("progress").innerHTML = `<p class="sub">${done}/${D.progress.length} step hoàn thành</p><table>` +
     D.progress.map((p) => `<tr><td style="width:28px">${p.done ? "✔" : "○"}</td><td style="text-align:left"><b>STEP ${p.n}</b> ${p.text.replace(/\*\*/g, "")}</td></tr>`).join("") + "</table>";
   renderWF();
+  renderStats();
   const have = SYMS.filter((s) => D.sweep[s]);
   if (!have.length) { $("sweep").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --sweep</code> rồi <code>python make_report.py</code>.</p>`; return; }
   const pc = (v) => (v * 100).toFixed(1) + "%", row = (r) => `<tr><td>${pc(r.dl)}</td><td>${pc(r.dh)}</td><td>${r.n}</td><td>${r.mode}</td><td>${(r.step_pct * 100).toFixed(2)}%</td><td>${r.sharpe.toFixed(2)}</td><td>${pc(r.return)}</td><td>${pc(r.mdd)}</td><td>${r.trades}</td></tr>`;

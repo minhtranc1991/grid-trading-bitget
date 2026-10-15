@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grid Opt Data Report</title>
+<style>
+:root {
+  color-scheme: light;
+  --bg:#f4f3f0; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#8a8984; --grid:#e6e4df; --axis:#c9c7c0;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --pos:#2a78d6; --neg:#eb6834;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg:#121211; --surface:#1a1a19; --ink:#f0efec; --ink2:#c3c2b7; --muted:#8d8c85; --grid:#2c2c2a; --axis:#46453f;
+    --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --pos:#3987e5; --neg:#d95926;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg:#121211; --surface:#1a1a19; --ink:#f0efec; --ink2:#c3c2b7; --muted:#8d8c85; --grid:#2c2c2a; --axis:#46453f;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --pos:#3987e5; --neg:#d95926;
+}
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; }
+h1 { font-size:24px; margin:0 0 4px; }
+h2 { font-size:17px; margin:0 0 4px; }
+.sub { color:var(--ink2); margin:0 0 16px; font-size:14px; }
+.card { background:var(--surface); border-radius:12px; padding:16px; margin:16px 0; box-shadow:0 0 0 1px var(--grid); }
+.kpis { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin:16px 0; }
+.kpi { background:var(--surface); border-radius:12px; padding:12px 14px; box-shadow:0 0 0 1px var(--grid); }
+.kpi b { display:block; font-size:24px; font-variant-numeric:tabular-nums; }
+.kpi span { color:var(--ink2); font-size:13px; }
+.legend { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:13px; color:var(--ink2); margin:6px 0 4px; }
+.legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+svg { display:block; width:100%; height:auto; overflow:visible; }
+svg text { fill:var(--ink2); font-size:11px; font-variant-numeric:tabular-nums; }
+.gridline { stroke:var(--grid); stroke-width:1; }
+.axisline { stroke:var(--axis); stroke-width:1; }
+.tip { position:fixed; pointer-events:none; background:var(--surface); color:var(--ink); border-radius:8px; padding:8px 10px;
+  font-size:12px; box-shadow:0 0 0 1px var(--axis),0 4px 14px rgba(0,0,0,.18); opacity:0; transition:opacity .08s; z-index:9; white-space:nowrap; }
+.tip b { display:block; margin-bottom:2px; }
+.tip i { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:6px; }
+.row2 { display:grid; grid-template-columns:repeat(auto-fit,minmax(420px,1fr)); gap:16px; }
+.row { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:16px; }
+table { border-collapse:collapse; width:100%; font-size:13px; font-variant-numeric:tabular-nums; }
+th,td { padding:6px 8px; text-align:right; border-bottom:1px solid var(--grid); }
+th:first-child,td:first-child { text-align:left; }
+th { color:var(--ink2); font-weight:600; }
+.heat td { text-align:center; padding:6px 2px; font-size:12px; min-width:44px; border:2px solid var(--surface); border-radius:4px; }
+.heat th { font-size:11px; padding:4px 2px; }
+.note { color:var(--ink2); font-size:13px; margin:8px 0 0; }
+details { margin-top:10px; } summary { cursor:pointer; color:var(--ink2); font-size:13px; }
+pre { overflow:auto; font-size:12px; background:var(--bg); padding:10px; border-radius:8px; max-height:340px; }
+button { background:var(--surface); color:var(--ink); border:1px solid var(--axis); border-radius:8px; padding:4px 10px; cursor:pointer; float:right; }
+.tag { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; background:var(--bg); color:var(--ink2); }
+</style>
+</head>
+<body>
+<main>
+  <button id="theme" title="Đổi sáng/tối">◐ Theme</button>
+  <h1>Grid Opt · Báo cáo dữ liệu & log</h1>
+  <p class="sub" id="meta"></p>
+  <div class="kpis" id="kpis"></div>
+
+  <section class="card">
+    <h2>1. Giá chuẩn hóa (đầu kỳ = 100)</h2>
+    <p class="sub">Buy &amp; Hold của từng cặp, lấy mẫu 4 giờ. Trỏ chuột để xem giá trị.</p>
+    <div class="legend" data-legend></div><div id="c-px"></div>
+    <p class="note">PAXG và XAUT gần như chồng khít vì cùng neo giá vàng, nên hai cặp này không phải hai mẫu độc lập.</p>
+  </section>
+
+  <section class="card">
+    <h2>2. Drawdown từ đỉnh (%)</h2>
+    <p class="sub">Mức sụt so với đỉnh gần nhất. Đáy sâu nhất của mỗi đường chính là MDD.</p>
+    <div class="legend" data-legend></div><div id="c-dd"></div>
+  </section>
+
+  <section class="card">
+    <h2>3. Biến động 30 ngày (annualized, %)</h2>
+    <p class="sub">Độ lệch chuẩn lợi suất ngày × √365. Vàng thấp hơn crypto rõ rệt, nên phí chiếm tỷ trọng lớn hơn trên bước lưới nhỏ.</p>
+    <div class="legend" data-legend></div><div id="c-vol"></div>
+  </section>
+
+  <section class="card">
+    <h2>4. Phân phối lợi suất ngày</h2>
+    <p class="sub">Cột = % số ngày trong mỗi khoảng lợi suất; đường nét đứt = phân phối chuẩn cùng trung bình/độ lệch. Đuôi dày hơn chuẩn nghĩa là biến cố lớn xảy ra thường hơn giả định.</p>
+    <div class="row2" id="hists"></div>
+    <details open><summary>Thống kê phân phối &amp; nến 15m</summary><div id="dstat" style="overflow:auto"></div></details>
+    <p class="note">Cột |r15m| &gt; 0.2% là tỷ lệ nến 15m có biên độ lớn hơn 0.2% (một chiều phí): ước lượng thô tần suất giá đủ xa để cắt một line.</p>
+  </section>
+
+  <section class="card">
+    <h2>5. Scatter regime theo ticker</h2>
+    <p class="sub">Mỗi điểm là một ngày: x = lợi suất 30 ngày trước đó, y = biến động 30 ngày (annualized). Màu theo regime, đo bằng Efficiency Ratio 30 ngày (|dịch chuyển ròng| / tổng quãng đường).</p>
+    <div class="legend"><span><i style="background:var(--muted)"></i>Range (grid thuận lợi)</span><span><i style="background:var(--pos)"></i>Trend lên</span><span><i style="background:var(--neg)"></i>Trend xuống</span></div>
+    <div class="row2" id="scatters"></div>
+    <p class="note" id="reg-note"></p>
+  </section>
+
+  <section class="card">
+    <h2>6. Chỉ số Buy &amp; Hold</h2>
+    <div class="row" id="metric-bars"></div>
+    <details open><summary>Bảng số liệu</summary><div id="met-table"></div></details>
+  </section>
+
+  <section class="card">
+    <h2>7. Lợi suất theo tháng (%)</h2>
+    <p class="sub">Xanh = tăng, cam = giảm; độ đậm theo biên độ. Dấu * là tháng không đủ (đầu/cuối dữ liệu).</p>
+    <div id="heat" style="overflow:auto"></div>
+  </section>
+
+  <section class="card">
+    <h2>8. Tương quan lợi suất ngày</h2>
+    <div id="corr" style="overflow:auto"></div>
+    <p class="note">Tương quan cao giữa các cặp nghĩa là kết quả walk-forward của chúng sẽ đồng pha, cần cẩn trọng khi đếm như bằng chứng độc lập.</p>
+  </section>
+
+  <section class="card">
+    <h2>9. Lịch fold walk-forward dự kiến</h2>
+    <p class="sub" id="fold-sub"></p>
+    <div class="legend"><span><i style="background:var(--muted)"></i>Train 90 ngày</span><span><i style="background:var(--s1)"></i>Test 30 ngày</span></div>
+    <div id="folds"></div>
+  </section>
+
+  <section class="card">
+    <h2>10. Lịch sử chạy (results/run.log)</h2>
+    <div id="runs"></div>
+    <details><summary>Log gốc</summary><pre id="rawlog"></pre></details>
+  </section>
+</main>
+<div class="tip" id="tip"></div>
+
+<script>
+const D = /*__DATA__*/null;
+const SYMS = D.syms, COL = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"];
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, "0");
+const fmtDate = (ms) => { const d = new Date(ms); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`; };
+const pct = (v, d = 1) => (v >= 0 ? "+" : "") + v.toFixed(d) + "%";
+const tip = $("tip");
+const showTip = (e, html) => {
+  tip.innerHTML = html; tip.style.opacity = 1;
+  const w = tip.offsetWidth, x = e.clientX + 14 + w > innerWidth ? e.clientX - 14 - w : e.clientX + 14;
+  tip.style.left = x + "px"; tip.style.top = Math.max(8, e.clientY - 20) + "px";
+};
+const hideTip = () => (tip.style.opacity = 0);
+const svgEl = (w, h, inner) => `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" role="img">${inner}</svg>`;
+
+function niceTicks(lo, hi, n = 5) {
+  const raw = (hi - lo) / n, p = 10 ** Math.floor(Math.log10(raw)), f = raw / p;
+  const step = (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * p, out = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+function lineChart(root, o) {
+  const W = Math.max(320, root.clientWidth), H = o.h || 300, m = { l: 48, r: W < 560 ? 64 : 92, t: 10, b: 26 };
+  const iw = W - m.l - m.r, ih = H - m.t - m.b, n = o.x.length;
+  const all = o.series.flatMap((s) => s.y).filter((v) => v != null);
+  let lo = Math.min(...all), hi = Math.max(...all); const pd = (hi - lo) * 0.06; lo -= pd; hi += pd;
+  const X = (i) => m.l + (i / (n - 1)) * iw, Y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * ih;
+  let g = "";
+  for (const v of niceTicks(lo, hi)) g += `<line class="gridline" x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end">${o.fmt(v)}</text>`;
+  const step = Math.ceil(n / Math.max(3, Math.floor(iw / 90)));
+  let last = -1e9;
+  for (let i = 0; i < n; i += 1) {
+    const d = new Date(o.x[i]);
+    if (d.getUTCDate() <= 3 && d.getUTCMonth() % 3 === 0 && X(i) - last > 70) {
+      last = X(i); g += `<text x="${X(i)}" y="${H - 6}" text-anchor="middle">${fmtDate(o.x[i]).slice(0, 7)}</text><line class="axisline" x1="${X(i)}" x2="${X(i)}" y1="${m.t + ih}" y2="${m.t + ih + 4}"/>`;
+    }
+  }
+  g += `<line class="axisline" x1="${m.l}" x2="${m.l + iw}" y1="${m.t + ih}" y2="${m.t + ih}"/>`;
+  if (o.ref != null) g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(o.ref)}" y2="${Y(o.ref)}" style="stroke:var(--muted);stroke-dasharray:4 4"/>`;
+  let paths = "";
+  for (const s of o.series) {
+    let d = ""; let pen = false;
+    s.y.forEach((v, i) => { if (v == null) { pen = false; return; } d += (pen ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1); pen = true; });
+    paths += `<path d="${d}" fill="none" style="stroke:${s.color}" stroke-width="2" stroke-linejoin="round"/>`;
+  }
+  // nhãn trực tiếp ở cuối đường, dồn tránh chồng
+  const ends = o.series.map((s) => { let j = n - 1; while (j > 0 && s.y[j] == null) j -= 1; return { s, y: Y(s.y[j]) }; }).sort((a, b) => a.y - b.y);
+  for (let k = 1; k < ends.length; k += 1) ends[k].y = Math.max(ends[k].y, ends[k - 1].y + 13);
+  const over = ends[ends.length - 1].y - (m.t + ih); if (over > 0) ends.forEach((e) => (e.y -= over));
+  for (const e of ends) paths += `<text x="${m.l + iw + 6}" y="${e.y + 4}">${e.s.name.replace("USDT", "")}</text>`;
+  root.innerHTML = svgEl(W, H, g + paths + `<line id="cx" y1="${m.t}" y2="${m.t + ih}" style="stroke:var(--muted);opacity:0"/><g id="dots"></g><rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="hit"/>`);
+  const svg = root.querySelector("svg"), cx = svg.querySelector("#cx"), dots = svg.querySelector("#dots");
+  svg.querySelector("#hit").addEventListener("mousemove", (e) => {
+    const r = svg.getBoundingClientRect(), px = ((e.clientX - r.left) / r.width) * W;
+    const i = Math.min(n - 1, Math.max(0, Math.round(((px - m.l) / iw) * (n - 1))));
+    cx.setAttribute("x1", X(i)); cx.setAttribute("x2", X(i)); cx.style.opacity = 1;
+    dots.innerHTML = o.series.filter((s) => s.y[i] != null).map((s) => `<circle cx="${X(i)}" cy="${Y(s.y[i])}" r="4" style="fill:${s.color};stroke:var(--surface);stroke-width:2"/>`).join("");
+    showTip(e, `<b>${fmtDate(o.x[i])}</b>` + o.series.filter((s) => s.y[i] != null).map((s) => `<div><i style="background:${s.color}"></i>${s.name.replace("USDT", "")}: ${o.fmt(s.y[i], true)}</div>`).join(""));
+  });
+  svg.querySelector("#hit").addEventListener("mouseleave", () => { cx.style.opacity = 0; dots.innerHTML = ""; hideTip(); });
+}
+
+function legend() {
+  document.querySelectorAll("[data-legend]").forEach((el) => {
+    el.innerHTML = SYMS.map((s, i) => `<span><i style="background:${COL[i]}"></i>${s}</span>`).join("");
+  });
+}
+
+function barRow(title, vals, fmt) {
+  const W = 300, rowH = 30, h = rowH * SYMS.length + 8, lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const l = 74, r = 56, X = (v) => l + ((v - lo) / (hi - lo || 1)) * (W - l - r), z = X(0);
+  let g = `<line class="axisline" x1="${z}" x2="${z}" y1="0" y2="${h}"/>`;
+  SYMS.forEach((s, i) => {
+    const y = i * rowH + 6, v = vals[i], x0 = Math.min(z, X(v)), bw = Math.max(2, Math.abs(X(v) - z));
+    g += `<text x="${l - 8}" y="${y + 14}" text-anchor="end">${s.replace("USDT", "")}</text>
+      <rect x="${x0}" y="${y}" width="${bw}" height="18" rx="4" style="fill:${COL[i]}"><title>${s}: ${fmt(v)}</title></rect>
+      <text x="${(v >= 0 ? x0 + bw : z) + 6}" y="${y + 14}">${fmt(v)}</text>`;
+  });
+  return `<div><h2 style="font-size:14px">${title}</h2>${svgEl(W, h, g)}</div>`;
+}
+
+function heat(id, rowLabels, colLabels, rows, fmt, color, max) {
+  let h = `<table class="heat"><tr><th></th>${colLabels.map((c) => `<th>${c}</th>`).join("")}</tr>`;
+  rows.forEach((row, i) => {
+    h += `<tr><th style="text-align:left">${rowLabels[i]}</th>` + row.map((v) => {
+      if (v == null) return `<td></td>`;
+      const [c, a] = color(v, max);
+      return `<td style="background:color-mix(in srgb, var(${c}) ${Math.round(a * 62)}%, var(--surface))" title="${rowLabels[i]} ${fmt(v)}">${fmt(v)}</td>`;
+    }).join("") + "</tr>";
+  });
+  $(id).innerHTML = h + "</table>";
+}
+
+function render() {
+  const [t0, t1] = D.span, days = (t1 - t0) / 864e5;
+  $("meta").textContent = `${D.tf} · ${fmtDate(t0)} → ${fmtDate(t1)} (UTC) · tạo lúc ${D.generated}`;
+  const gaps = SYMS.reduce((a, s) => a + (D.runs.length ? (D.runs[D.runs.length - 1].syms[s] || {}).gap || 0 : 0), 0);
+  $("kpis").innerHTML = [
+    [D.met[SYMS[0]].bars.toLocaleString(), "Số nến mỗi cặp"], [days.toFixed(0) + " ngày", "Khoảng thời gian"],
+    [gaps, "Gap (nến thiếu, 4 cặp)"], [D.runs.length, "Lần chạy đã ghi"], [SYMS.length, "Cặp giao dịch"],
+  ].map(([b, s]) => `<div class="kpi"><b>${b}</b><span>${s}</span></div>`).join("");
+
+  const mk = (key, x) => SYMS.map((s, i) => ({ name: s, color: COL[i], y: D[key][s] }));
+  lineChart($("c-px"), { x: D.t4, series: mk("px"), fmt: (v, t) => v.toFixed(t ? 1 : 0), ref: 100 });
+  lineChart($("c-dd"), { x: D.t4, series: mk("dd"), fmt: (v, t) => v.toFixed(t ? 1 : 0) + "%", ref: 0 });
+  lineChart($("c-vol"), { x: D.td, series: mk("vol"), fmt: (v, t) => v.toFixed(t ? 1 : 0) + "%" });
+
+  const M = D.met;
+  $("metric-bars").innerHTML =
+    barRow("Sharpe (annualized)", SYMS.map((s) => M[s].sharpe), (v) => v.toFixed(2)) +
+    barRow("Return", SYMS.map((s) => M[s].return * 100), (v) => pct(v)) +
+    barRow("Max drawdown", SYMS.map((s) => M[s].mdd * 100), (v) => v.toFixed(1) + "%");
+  $("met-table").innerHTML = `<table><tr><th>Cặp</th><th>Giá đầu</th><th>Giá cuối</th><th>Return</th><th>Sharpe</th><th>MDD</th><th>Vol (ann.)</th><th>Nến</th></tr>` +
+    SYMS.map((s) => `<tr><td>${s}</td><td>${M[s].first.toLocaleString()}</td><td>${M[s].last.toLocaleString()}</td><td>${pct(M[s].return * 100)}</td><td>${M[s].sharpe.toFixed(2)}</td><td>${(M[s].mdd * 100).toFixed(1)}%</td><td>${(M[s].vol * 100).toFixed(1)}%</td><td>${M[s].bars.toLocaleString()}</td></tr>`).join("") + "</table>";
+
+  const mmax = Math.max(...SYMS.flatMap((s) => D.mret[s].filter((v) => v != null).map(Math.abs)));
+  heat("heat", SYMS, D.months, SYMS.map((s) => D.mret[s]), (v) => v.toFixed(1), (v, mx) => [v >= 0 ? "--pos" : "--neg", Math.min(1, Math.abs(v) / mx)], mmax);
+  heat("corr", SYMS, SYMS, D.corr, (v) => v.toFixed(2), (v) => ["--pos", Math.max(0, v)], 1);
+
+  // fold schedule: train 90 / test 30 / trượt 30
+  const nf = Math.floor((days - 120) / 30) + 1, W = Math.max(320, $("folds").clientWidth), rh = 18, h = nf * rh + 28, L = 46;
+  const X = (ms) => L + ((ms - t0) / (t1 - t0)) * (W - L - 8);
+  let g = "";
+  for (let f = 0; f < nf; f += 1) {
+    const a = t0 + f * 30 * 864e5, b = a + 90 * 864e5, c = b + 30 * 864e5, y = f * rh + 4;
+    g += `<text x="${L - 6}" y="${y + 11}" text-anchor="end">#${f + 1}</text>
+      <rect x="${X(a)}" y="${y}" width="${X(b) - X(a)}" height="12" rx="3" style="fill:var(--muted)"><title>Fold ${f + 1} train ${fmtDate(a)} → ${fmtDate(b)}</title></rect>
+      <rect x="${X(b)}" y="${y}" width="${X(c) - X(b)}" height="12" rx="3" style="fill:var(--s1)"><title>Fold ${f + 1} test ${fmtDate(b)} → ${fmtDate(c)}</title></rect>`;
+  }
+  g += `<text x="${L}" y="${h - 4}">${fmtDate(t0)}</text><text x="${W - 8}" y="${h - 4}" text-anchor="end">${fmtDate(t1)}</text>`;
+  $("folds").innerHTML = svgEl(W, h, g);
+  $("fold-sub").textContent = `Với ${days.toFixed(0)} ngày dữ liệu có khoảng ${nf} fold OOS mỗi cặp: đủ để chạy nhưng khoảng tin cậy của Sharpe OOS sẽ rộng.`;
+
+  $("runs").innerHTML = `<table><tr><th>#</th><th>Thời điểm</th><th>Tham số</th><th>Cặp</th><th>Nến</th><th>Gap</th><th>Cache trước → sau</th><th>Hàng thô tải</th><th>Thời gian (s)</th></tr>` +
+    D.runs.flatMap((r, i) => Object.entries(r.syms).map(([s, d], k) =>
+      `<tr><td>${k === 0 ? i + 1 : ""}</td><td>${k === 0 ? r.t : ""}</td><td style="text-align:left;max-width:240px;overflow:hidden;text-overflow:ellipsis">${k === 0 ? r.args : ""}</td>
+       <td>${s}</td><td>${d.bars ?? "–"}</td><td>${d.gap ?? "–"}</td><td>${d.cache_before ?? "–"} → ${d.cache_after ?? "–"}</td><td>${d.fetched ?? "–"}</td><td>${d.elapsed ?? "–"}</td></tr>`)).join("") + "</table>";
+  $("rawlog").textContent = D.rawlog;
+  legend();
+  renderDist();
+}
+
+function histCard(s, i) {
+  const h = D.hist[s], W = 340, H = 190, m = { l: 34, r: 8, t: 8, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const e = h.edges, lo = e[0], hi = e[e.length - 1], X = (v) => m.l + ((v - lo) / (hi - lo)) * iw;
+  const ymax = Math.max(...h.pct, ...h.norm) * 1.08, Y = (v) => m.t + (1 - v / ymax) * ih;
+  let g = "";
+  for (const v of niceTicks(0, ymax, 4)) g += `<line class="gridline" x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${m.l - 5}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
+  for (const v of niceTicks(lo, hi, 4)) g += `<text x="${X(v)}" y="${H - 8}" text-anchor="middle">${v}%</text>`;
+  g += `<line class="axisline" x1="${m.l}" x2="${W - m.r}" y1="${m.t + ih}" y2="${m.t + ih}"/>`;
+  h.pct.forEach((p, k) => {
+    g += `<rect x="${X(e[k]) + 0.5}" y="${Y(p)}" width="${Math.max(1, X(e[k + 1]) - X(e[k]) - 1)}" height="${m.t + ih - Y(p)}" rx="2" style="fill:${COL[i]}"><title>${s}: ${e[k].toFixed(2)}% đến ${e[k + 1].toFixed(2)}%: ${p.toFixed(1)}% số ngày</title></rect>`;
+  });
+  g += `<path d="${h.norm.map((v, k) => (k ? "L" : "M") + X((e[k] + e[k + 1]) / 2).toFixed(1) + " " + Y(v).toFixed(1)).join("")}" fill="none" style="stroke:var(--ink);stroke-dasharray:4 3" stroke-width="1.5"/>`;
+  return `<div><h2 style="font-size:14px">${s}</h2>${svgEl(W, H, g)}</div>`;
+}
+
+const SC = { W: 340, H: 260, l: 40, r: 10, t: 8, b: 30 };
+function scX(r) { const xl = Math.min(...r.x), xh = Math.max(...r.x); return { xl, xh, f: (v) => SC.l + ((v - xl) / (xh - xl)) * (SC.W - SC.l - SC.r) }; }
+function scY(r) { const yh = Math.max(...r.y) * 1.05; return { yh, f: (v) => SC.t + (1 - v / yh) * (SC.H - SC.t - SC.b) }; }
+
+function scatterCard(s) {
+  const r = D.reg[s], n = r.x.length, { xl, xh, f: X } = scX(r), { yh, f: Y } = scY(r);
+  const cls = (k) => (r.er[k] <= D.erth ? "var(--muted)" : r.up[k] ? "var(--pos)" : "var(--neg)");
+  let g = "", range = 0, pts = "";
+  for (const v of niceTicks(0, yh, 4)) g += `<line class="gridline" x1="${SC.l}" x2="${SC.W - SC.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${SC.l - 5}" y="${Y(v) + 4}" text-anchor="end">${v}%</text>`;
+  for (const v of niceTicks(xl, xh, 5)) g += `<text x="${X(v)}" y="${SC.H - 14}" text-anchor="middle">${v}%</text>`;
+  g += `<line class="axisline" x1="${SC.l}" x2="${SC.W - SC.r}" y1="${Y(0)}" y2="${Y(0)}"/>`;
+  if (xl < 0 && xh > 0) g += `<line x1="${X(0)}" x2="${X(0)}" y1="${SC.t}" y2="${Y(0)}" style="stroke:var(--axis);stroke-dasharray:3 3"/>`;
+  g += `<text x="${SC.l + (SC.W - SC.l - SC.r) / 2}" y="${SC.H - 1}" text-anchor="middle">Lợi suất 30 ngày</text>`;
+  for (let k = 0; k < n; k += 1) {
+    if (r.er[k] <= D.erth) range += 1;
+    pts += `<circle cx="${X(r.x[k]).toFixed(1)}" cy="${Y(r.y[k]).toFixed(1)}" r="2.6" style="fill:${cls(k)};opacity:.75;stroke:var(--surface);stroke-width:.5"/>`;
+  }
+  return `<div id="sc-${s}"><h2 style="font-size:14px">${s} <span class="tag">Range ${((range / n) * 100).toFixed(0)}% số ngày</span></h2>${svgEl(SC.W, SC.H, g + pts)}</div>`;
+}
+
+function scatterHover(s) {
+  const r = D.reg[s], svg = $("sc-" + s).querySelector("svg"), X = scX(r).f, Y = scY(r).f;
+  svg.addEventListener("mousemove", (e) => {
+    const b = svg.getBoundingClientRect(), px = ((e.clientX - b.left) / b.width) * SC.W, py = ((e.clientY - b.top) / b.height) * SC.H;
+    let best = -1, bd = 1e9;
+    r.x.forEach((v, k) => { const d = (X(v) - px) ** 2 + (Y(r.y[k]) - py) ** 2; if (d < bd) { bd = d; best = k; } });
+    if (bd > 400) return hideTip();
+    const lab = r.er[best] <= D.erth ? "Range" : r.up[best] ? "Trend lên" : "Trend xuống";
+    showTip(e, `<b>${fmtDate(r.t[best])} · ${lab}</b><div>Return 30d: ${pct(r.x[best])}</div><div>Vol 30d: ${r.y[best].toFixed(1)}%</div><div>ER: ${r.er[best].toFixed(2)}</div>`);
+  });
+  svg.addEventListener("mouseleave", hideTip);
+}
+
+function renderDist() {
+  $("hists").innerHTML = SYMS.map(histCard).join("");
+  const S = D.dstat, f = (v, d = 2) => v.toFixed(d);
+  $("dstat").innerHTML = `<table><tr><th>Cặp</th><th>Mean/ngày</th><th>Std/ngày</th><th>Skew</th><th>Excess kurt</th><th>Min</th><th>Max</th><th>Ngày &gt; 2σ</th><th>median |r15m|</th><th>|r15m| &gt; 0.1%</th><th>|r15m| &gt; 0.2%</th><th>|r15m| &gt; 0.4%</th></tr>` +
+    SYMS.map((s) => `<tr><td>${s}</td><td>${f(S[s].mean)}%</td><td>${f(S[s].std)}%</td><td>${f(S[s].skew)}</td><td>${f(S[s].kurt)}</td><td>${f(S[s].min, 1)}%</td><td>${f(S[s].max, 1)}%</td><td>${f(S[s].tail2, 1)}%</td><td>${f(S[s].med15, 3)}%</td><td>${f(S[s].p15_01, 1)}%</td><td>${f(S[s].p15_02, 1)}%</td><td>${f(S[s].p15_04, 1)}%</td></tr>`).join("") + "</table>";
+  $("scatters").innerHTML = SYMS.map(scatterCard).join("");
+  SYMS.forEach(scatterHover);
+  $("reg-note").textContent = `Ngưỡng ER = ${D.erth} (random walk 30 ngày có ER ≈ 0.15). Grid cần phần lớn thời gian ở regime Range; khi một ticker ở lâu trong vùng trend, grid sẽ giữ coin đang giảm hoặc bán hết sớm.`;
+}
+
+$("theme").onclick = () => {
+  const el = document.documentElement, dark = el.dataset.theme ? el.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  el.dataset.theme = dark ? "light" : "dark"; render();
+};
+let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(render, 120); });
+render();
+</script>
+</body>
+</html>

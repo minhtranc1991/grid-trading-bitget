@@ -13,8 +13,17 @@ python grid_optimizer.py --symbols BTCUSDT ETHUSDT PAXGUSDT XAUTUSDT --tf 15m --
 pytest
 ```
 
-Hiện tại (STEP 1) CLI chỉ tải/cache nến vào `data/{symbol}_{tf}.csv` và in số nến, khoảng thời gian, số gap.
-Lần chạy sau chỉ tải phần thiếu. CSV nằm trong `.gitignore`.
+Hiện tại CLI tải/cache nến vào `data/{symbol}_{tf}.csv`, in số nến, khoảng thời gian, số gap và chỉ số buy&hold của từng cặp.
+Lần sau chạy chỉ tải phần thiếu. CSV nằm trong `.gitignore`. Mọi lần chạy được ghi nối vào `results/run.log` (dùng `log.info` cho các step sau).
+
+**Báo cáo trực quan:** `python make_report.py` đọc `results/run.log` + `data/*.csv` và ghi `results/report.html` (tự đủ, mở bằng trình duyệt).
+Gồm giá chuẩn hóa, drawdown, vol 30d, phân phối lợi suất, scatter regime (Efficiency Ratio 30 ngày), chỉ số B&H, heatmap tháng, tương quan, lịch fold, lịch sử chạy. Tạo lại sau mỗi lần chạy mới.
+
+**Hàm lõi:** `load_ohlcv`, `grid_equity` (equity chuẩn hóa, vốn đầu = 1), `grid_stats` (số giao dịch, turnover), `metrics`, `buy_and_hold`.
+
+**Lưu ý lý thuyết:** equity của grid chỉ phụ thuộc giá hiện tại và số line đã cắt, không phụ thuộc đường đi. Giá đi lên-xuống rồi về chỗ cũ thì equity gộp = 1, chỉ còn trừ phí. Lãi chỉ có khi giá kết thúc ở chỗ khác chỗ bắt đầu (drift/regime).
+
+**B&H 15m (2025-04-21 → 2026-10-15):** BTC Sharpe 0.07 / −8.2% / MDD −53.8%; ETH 0.71 / +44.5% / −69.3%; PAXG 0.61 / +20.2% / −29.7%; XAUT 0.62 / +20.1% / −29.4%.
 
 ## Quy trình làm việc
 
@@ -22,13 +31,16 @@ Lần chạy sau chỉ tải phần thiếu. CSV nằm trong `.gitignore`.
 - Chỉ làm một step mỗi lượt, mỗi step để lại ít nhất một test chạy được; step sau không được làm hỏng test step trước.
 - Ưu tiên một file `grid_optimizer.py`; chỉ tách file khi >400 dòng.
 - Giả định chưa xác minh (phí, giới hạn lưới) là tham số có chú thích "cần xác minh".
+- Update nhỏ chỉ commit trên nhánh hiện tại; chỉ rẽ nhánh mới cho step/feature thật.
+- Trước mỗi lần push: cập nhật README (checklist, thông tin, giới hạn) theo thay đổi của dự án.
+- Commit theo từng feature nhỏ (một commit một việc: code step, test, báo cáo, README...), không gộp tất cả vào một commit.
 
 ## Checklist
 
 - [x] **STEP 0** Khung dự án: `grid_optimizer.py` (`main()`), `requirements.txt`, `tests/`, `data/`, `results/`, README
 - [x] **STEP 1** Tải & cache dữ liệu (`load_ohlcv`): 4 cặp × 15m, ~52000 nến, 0 gap, test ts tăng/không trùng/không NaN
-- [ ] **STEP 2** Grid backtest lõi `grid_equity(prices, low, high, n, mode, fee)` vector hóa + 4 test (equity[0]=1, giá đứng yên, k line, khớp vòng lặp thuần Python sai số <1e-9)
-- [ ] **STEP 3** Chỉ số: `metrics` (Sharpe annualized, return, MDD, số giao dịch, turnover) + `buy_and_hold`
+- [x] **STEP 2** Grid backtest lõi `grid_equity(prices, low, high, n, mode, fee)` vector hóa + 4 test (equity[0]=1, giá đứng yên, k line, khớp vòng lặp thuần Python sai số <1e-9)
+- [x] **STEP 3** Chỉ số: `metrics` (Sharpe annualized, return, MDD, số giao dịch, turnover) + `buy_and_hold`
 - [ ] **STEP 4** Quét tham số trên một cửa sổ (`sweep`), lọc bước% ≥ 2·fee·hệ số, n ≤ giới hạn lưới, trades ≥ 20; heatmap `results/heatmap_BTC.png`. Ghi chú in-sample
 - [ ] **STEP 5** Walk-forward: train 90d → test 30d, trượt 30d; `results/{symbol}_folds.csv`; test không rò rỉ
 - [ ] **STEP 6** Tham số "phẳng" (làm mượt Sharpe 3×3) vs đỉnh nhọn; báo cáo ổn định median/IQR, cờ UNSTABLE

@@ -39,4 +39,4 @@ def test_oos_returns_length_matches_folds():
     f = g.walk_forward(df, "15m", "BTCUSDT", space=sp, with_dgt=False)
     f["fee"] = 0.001
     gr, bh = g.oos_returns(df, f)
-    assert len(gr) == len(bh) == len(f) * (30 * 96 - 1)  # mỗi fold test 30 ngày = 2880 bar -> 2879 lợi suất
+    assert len(gr) == len(bh) == len(f) * (7 * 96 - 1)  # mỗi fold forward 7 ngày = 672 bar -> 671 lợi suất

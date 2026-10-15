@@ -291,7 +291,7 @@ def dgt_equity(prices, dl, dh, n, mode="arithmetic", fee=0.0, return_resets=Fals
 UNSTABLE_IQR = {"range_ratio": 0.35, "step_ratio": 1.0}  # cần hiệu chỉnh: IQR/khoảng của dl,dh; IQR/median của step%
 # Kết quả walk-forward (xem README STEP 6): trung bình Sharpe OOS của "phẳng" -1.62 vs "đỉnh nhọn" -1.68 trên 4 cặp,
 # thắng 2/4 cặp, chênh lệch nằm trong nhiễu (15 fold). Chọn "phẳng" làm mặc định vì ít nhạy với nhiễu, không vì có edge.
-DEFAULT_PICK = "flat"
+DEFAULT_PICK = "stable"  # xem README: IS 28d -> OOS 7d chọn tham số ổn định -> forward 7d
 MIN_NEIGHBORS = 5  # ô được chọn phải có >= 5 ô hợp lệ trong lân cận 3x3 (kể cả chính nó)
 
 
@@ -337,64 +337,103 @@ def _grid_oos(P, dl, dh, n, mode, fee, bpy):
     return metrics(eq, bpy, trades, turn)
 
 
-def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, step_days=30, space=None, safety=2.0, with_dgt=True, max_grids=MAX_GRIDS):
-    """Mỗi fold: sweep trên train [a,b), chọn tham số tốt nhất, áp tại giá đầu test [b,c). Chỉ dùng dữ liệu < b để chọn."""
+SELECT_DAYS = 7  # độ dài cửa sổ OOS dùng để tìm tham số ổn định (chỉnh bằng --select)
+TOP_K = 20  # số ứng viên lấy từ IS
+PICK_PREFIX = {"peak": "", "flat": "f_", "stable": "s_"}
+
+
+def stable_pick(res, space, sel_px, fee, bpy, top_k=TOP_K):
+    """Tham số ổn định: ứng viên = top_k theo Sharpe IS + tham số phẳng của IS; chấm lại trên tuần OOS-select;
+    chọn ứng viên có min(Sharpe IS, Sharpe OOS) cao nhất, tức là tốt ở cả hai nơi chứ không chỉ ở IS."""
+    cands = [(r.dl, r.dh, int(r.n), r["mode"], r.sharpe, r.step_pct) for _, r in res.head(top_k).iterrows()]
+    fl = smooth_pick(res, space)
+    cands.append((fl.dl, fl.dh, int(fl.n), fl["mode"], fl.sharpe, fl.step_pct))
+    best = None
+    for dl, dh, n, mode, is_sh, st in cands:
+        m = _grid_oos(sel_px, dl, dh, n, mode, fee, bpy)
+        score = min(is_sh, m["sharpe"])
+        if best is None or score > best["score"]:
+            best = {"dl": dl, "dh": dh, "n": n, "mode": mode, "step_pct": st, "is_sharpe": is_sh, "sel_sharpe": m["sharpe"], "score": score}
+    return best
+
+
+def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, step_days=7, space=None, safety=2.0,
+                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K):
+    """Mỗi fold (trượt step_days):
+      IS     [a, b)  : sweep, tìm tham số tối ưu (đỉnh nhọn và phẳng)
+      OOS    [b, s)  : chấm các ứng viên của IS, chọn tham số ổn định (tốt ở cả IS và OOS)
+      FORWARD[s, c)  : áp tham số tại giá đầu tuần, đo hiệu suất. Chưa từng dùng để chọn nên là phép thử sạch."""
+    select_days = SELECT_DAYS if select_days is None else select_days
     ts, px = df.ts.values, df.close.values
     bpy, space, rows, k = BARS_PER_YEAR[tf], space or space_for(symbol), [], 0
     while True:
         a = ts[0] + k * step_days * DAY_MS
-        b, c = a + train_days * DAY_MS, a + (train_days + test_days) * DAY_MS
+        b = a + train_days * DAY_MS
+        s_end = b + select_days * DAY_MS
+        c = s_end + test_days * DAY_MS
         if c > ts[-1] + BAR_MS[tf]:
             break
-        i0, i1, i2 = np.searchsorted(ts, [a, b, c])
-        tr, te = px[i0:i1], px[i1:i2]
+        i0, i1, i2, i3 = np.searchsorted(ts, [a, b, s_end, c])
+        tr, sel, te = px[i0:i1], px[i1:i2], px[i2:i3]
         res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids)
         if res.empty:
             log.info("WF %s fold %d: không có tổ hợp qua lọc, bỏ qua", symbol, k)
             k += 1
             continue
-        best = res.iloc[0]  # đỉnh in-sample (STEP 6 sẽ thay bằng tham số phẳng)
+        best = res.iloc[0]  # đỉnh in-sample
+        fl = smooth_pick(res, space)
+        st = stable_pick(res, space, sel, fee, bpy, top_k)
         oos = _grid_oos(te, best.dl, best.dh, int(best.n), best["mode"], fee, bpy)
+        foos = _grid_oos(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, bpy)
+        soos = _grid_oos(te, st["dl"], st["dh"], st["n"], st["mode"], fee, bpy)
         dfl = _grid_oos(te, **DEFAULT_GRID, fee=fee, bpy=bpy)
         bh = metrics(buy_and_hold(te), bpy)
-        fl = smooth_pick(res, space)
         if with_dgt:
-            deq, dres = dgt_equity(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, True)
+            deq, dres = dgt_equity(te, st["dl"], st["dh"], st["n"], st["mode"], fee, True)
             dm = metrics(deq, bpy)
             deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
             dm2 = metrics(deq2, bpy)
         else:
             dm = dm2 = {"sharpe": np.nan, "return": np.nan, "mdd": np.nan}
             dres = dres2 = np.nan
-        foos = _grid_oos(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, bpy)
-        rows.append({"dgt_sharpe": dm["sharpe"], "dgt_return": dm["return"], "dgt_mdd": dm["mdd"], "dgt_resets": dres,
-                     "dgtdef_sharpe": dm2["sharpe"], "dgtdef_return": dm2["return"], "dgtdef_mdd": dm2["mdd"], "dgtdef_resets": dres2,
-                     "f_dl": fl.dl, "f_dh": fl.dh, "f_n": int(fl.n), "f_mode": fl["mode"], "f_step_pct": fl.step_pct,
-                     "f_is_sharpe": fl.sharpe, "f_smooth": fl.smooth, "f_oos_sharpe": foos["sharpe"], "f_oos_return": foos["return"],
-                     "f_oos_mdd": foos["mdd"], "f_oos_trades": foos["trades"],
-"fold": k, "train_last_ts": int(ts[i1 - 1]), "test_start": int(ts[i1]), "test_end": int(ts[i2 - 1]),
-                     "dl": best.dl, "dh": best.dh, "n": int(best.n), "mode": best["mode"], "step_pct": best.step_pct,
-                     "is_sharpe": best.sharpe, "oos_sharpe": oos["sharpe"], "oos_return": oos["return"], "oos_mdd": oos["mdd"],
-                     "oos_trades": oos["trades"], "bh_sharpe": bh["sharpe"], "bh_return": bh["return"], "bh_mdd": bh["mdd"],
-                     "def_sharpe": dfl["sharpe"], "def_return": dfl["return"], "def_mdd": dfl["mdd"], "def_trades": dfl["trades"]})
+        rows.append({
+            "fold": k, "is_last_ts": int(ts[i1 - 1]), "train_last_ts": int(ts[i2 - 1]), "test_start": int(ts[i2]), "test_end": int(ts[i3 - 1]),
+            "dgt_sharpe": dm["sharpe"], "dgt_return": dm["return"], "dgt_mdd": dm["mdd"], "dgt_resets": dres,
+            "dgtdef_sharpe": dm2["sharpe"], "dgtdef_return": dm2["return"], "dgtdef_mdd": dm2["mdd"], "dgtdef_resets": dres2,
+            "s_dl": st["dl"], "s_dh": st["dh"], "s_n": st["n"], "s_mode": st["mode"], "s_step_pct": st["step_pct"],
+            "s_is_sharpe": st["is_sharpe"], "s_sel_sharpe": st["sel_sharpe"], "s_oos_sharpe": soos["sharpe"],
+            "s_oos_return": soos["return"], "s_oos_mdd": soos["mdd"], "s_oos_trades": soos["trades"],
+            "f_dl": fl.dl, "f_dh": fl.dh, "f_n": int(fl.n), "f_mode": fl["mode"], "f_step_pct": fl.step_pct,
+            "f_is_sharpe": fl.sharpe, "f_smooth": fl.smooth, "f_oos_sharpe": foos["sharpe"], "f_oos_return": foos["return"],
+            "f_oos_mdd": foos["mdd"], "f_oos_trades": foos["trades"],
+            "dl": best.dl, "dh": best.dh, "n": int(best.n), "mode": best["mode"], "step_pct": best.step_pct,
+            "is_sharpe": best.sharpe, "oos_sharpe": oos["sharpe"], "oos_return": oos["return"], "oos_mdd": oos["mdd"],
+            "oos_trades": oos["trades"], "bh_sharpe": bh["sharpe"], "bh_return": bh["return"], "bh_mdd": bh["mdd"],
+            "def_sharpe": dfl["sharpe"], "def_return": dfl["return"], "def_mdd": dfl["mdd"], "def_trades": dfl["trades"]})
         k += 1
     return pd.DataFrame(rows)
 
 
 def wf_summary(f):
-    return {"folds": len(f), "oos_sharpe_median": f.oos_sharpe.median(), "bh_sharpe_median": f.bh_sharpe.median(),
-            "def_sharpe_median": f.def_sharpe.median(), "is_sharpe_median": f.is_sharpe.median(),
-            "pct_profit": float((f.oos_return > 0).mean() * 100), "pct_beat_bh": float((f.oos_return > f.bh_return).mean() * 100),
-            "oos_return_median": f.oos_return.median(), "bh_return_median": f.bh_return.median(),
-            "f_oos_sharpe_median": f.f_oos_sharpe.median(), "f_is_sharpe_median": f.f_is_sharpe.median(),
-            "f_pct_profit": float((f.f_oos_return > 0).mean() * 100), "f_pct_beat_bh": float((f.f_oos_return > f.bh_return).mean() * 100),
-            "f_oos_return_median": f.f_oos_return.median(),
-            "dgt_sharpe_median": f.dgt_sharpe.median(), "dgt_return_median": f.dgt_return.median(),
-            "dgt_pct_profit": float((f.dgt_return > 0).mean() * 100), "dgt_pct_beat_bh": float((f.dgt_return > f.bh_return).mean() * 100),
-            "dgt_resets_median": f.dgt_resets.median(),
-            "dgtdef_sharpe_median": f.dgtdef_sharpe.median(), "dgtdef_return_median": f.dgtdef_return.median(),
-            "def_return_median": f.def_return.median(), "def_pct_profit": float((f.def_return > 0).mean() * 100),
-            "bh_pct_profit": float((f.bh_return > 0).mean() * 100)}
+    med = lambda c: float(f[c].median())
+    pp = lambda c: float((f[c] > 0).mean() * 100)
+    return {"folds": len(f), "bh_sharpe_median": med("bh_sharpe"), "def_sharpe_median": med("def_sharpe"),
+            "bh_return_median": med("bh_return"), "def_return_median": med("def_return"),
+            "bh_pct_profit": pp("bh_return"), "def_pct_profit": pp("def_return"),
+            # đỉnh nhọn (IS top-1)
+            "oos_sharpe_median": med("oos_sharpe"), "is_sharpe_median": med("is_sharpe"), "pct_profit": pp("oos_return"),
+            "pct_beat_bh": float((f.oos_return > f.bh_return).mean() * 100), "oos_return_median": med("oos_return"),
+            # phẳng (smooth IS)
+            "f_oos_sharpe_median": med("f_oos_sharpe"), "f_is_sharpe_median": med("f_is_sharpe"), "f_pct_profit": pp("f_oos_return"),
+            "f_pct_beat_bh": float((f.f_oos_return > f.bh_return).mean() * 100), "f_oos_return_median": med("f_oos_return"),
+            # ổn định (IS -> OOS)
+            "s_oos_sharpe_median": med("s_oos_sharpe"), "s_is_sharpe_median": med("s_is_sharpe"), "s_sel_sharpe_median": med("s_sel_sharpe"),
+            "s_pct_profit": pp("s_oos_return"), "s_pct_beat_bh": float((f.s_oos_return > f.bh_return).mean() * 100),
+            "s_oos_return_median": med("s_oos_return"),
+            # DGT trên tham số ổn định
+            "dgt_sharpe_median": med("dgt_sharpe"), "dgt_return_median": med("dgt_return"), "dgt_pct_profit": pp("dgt_return"),
+            "dgt_pct_beat_bh": float((f.dgt_return > f.bh_return).mean() * 100), "dgt_resets_median": med("dgt_resets"),
+            "dgtdef_sharpe_median": med("dgtdef_sharpe"), "dgtdef_return_median": med("dgtdef_return")}
 
 
 def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
@@ -405,21 +444,20 @@ def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
     f.to_csv(out, index=False)
     s = wf_summary(f)
     sp = space_for(symbol)
-    st_p, st_f = stability(f, sp), stability(f, sp, "f_")
-    log.info("WF %s DGT: OOS Sharpe median=%.2f (flat grid %.2f, B&H %.2f, DGT default %.2f), resets median=%.0f, %%fold lãi=%.0f%%",
-             symbol, s["dgt_sharpe_median"], s["f_oos_sharpe_median"], s["bh_sharpe_median"], s["dgtdef_sharpe_median"],
-             s["dgt_resets_median"], s["dgt_pct_profit"])
-    log.info("WF %s flat: OOS Sharpe median=%.2f (peak %.2f); %%fold lãi=%.0f%%; peak %s, flat %s", symbol, s["f_oos_sharpe_median"],
-             s["oos_sharpe_median"], s["f_pct_profit"], "UNSTABLE" if st_p["unstable"] else "stable", "UNSTABLE" if st_f["unstable"] else "stable")
-    log.info("WF %s train=%dd test=%dd step=%dd: %d folds, %.1fs. OOS Sharpe median=%.2f (B&H %.2f, default %.2f, in-sample %.2f); "
-             "%%fold lãi=%.0f%%, %%fold hơn B&H=%.0f%%", symbol, train, test, step, s["folds"], time.time() - t0, s["oos_sharpe_median"],
-             s["bh_sharpe_median"], s["def_sharpe_median"], s["is_sharpe_median"], s["pct_profit"], s["pct_beat_bh"])
+    st = stability(f, sp, "s_")
+    log.info("WF %s IS=%dd OOS-select=%dd forward=%dd step=%dd: %d fold, %.1fs", symbol, train, SELECT_DAYS, test, step, s["folds"], time.time() - t0)
+    log.info("WF %s Sharpe median (forward): stable=%.2f flat=%.2f peak=%.2f default=%.2f B&H=%.2f DGT=%.2f; %%fold lãi stable=%.0f%% (B&H %.0f%%), "
+             "%%fold hơn B&H=%.0f%%; in-sample(stable)=%.2f, OOS-select(stable)=%.2f; %s", symbol, s["s_oos_sharpe_median"],
+             s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["def_sharpe_median"], s["bh_sharpe_median"], s["dgt_sharpe_median"],
+             s["s_pct_profit"], s["bh_pct_profit"], s["s_pct_beat_bh"], s["s_is_sharpe_median"], s["s_sel_sharpe_median"],
+             "UNSTABLE" if st["unstable"] else "stable")
     return f
 
 
 # --- STEP 8: đánh giá thống kê & độ nhạy ---
-def oos_returns(df, folds, prefix="f_", with_ts=False):
+def oos_returns(df, folds, prefix=None, with_ts=False):
     """Lợi suất từng bar, nối các fold OOS: (grid theo tham số chọn ở fold, B&H cùng cửa sổ)."""
+    prefix = PICK_PREFIX[DEFAULT_PICK] if prefix is None else prefix
     ts, px = df.ts.values, df.close.values
     gr, bh, tt = [], [], []
     for r in folds.to_dict("records"):
@@ -465,7 +503,7 @@ def deflated_sharpe(r, n_trials, trial_var):
     return nd.cdf(sr * np.sqrt(T - 1) / den), nd.cdf((sr - sr0) * np.sqrt(T - 1) / den), float(sr0)
 
 
-def run_stats(symbol, tf, df, fee, train=90, test=30, step=30, window=90, max_grids=MAX_GRIDS):
+def run_stats(symbol, tf, df, fee, train=28, test=7, step=7, window=90, max_grids=MAX_GRIDS):
     bpy = BARS_PER_YEAR[tf]
     f = walk_forward(df, tf, symbol, fee, train, test, step, with_dgt=False, max_grids=max_grids)
     f["fee"] = fee
@@ -496,12 +534,12 @@ def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "
     for m in fees:
         s = wf_summary(walk_forward(df15, "15m", symbol, fee * m, with_dgt=False, max_grids=max_grids))
         base = s if m == 1.0 else base
-        rows.append({"kind": "fee", "label": f"{m:g}x ({fee * m:.4f})", **{k: s[k] for k in ("f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "f_pct_profit", "folds")}})
-        log.info("SENS %s fee x%g: flat=%.2f peak=%.2f B&H=%.2f", symbol, m, s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
+        rows.append({"kind": "fee", "label": f"{m:g}x ({fee * m:.4f})", **{k: s[k] for k in ("s_oos_sharpe_median", "f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "s_pct_profit", "folds")}})
+        log.info("SENS %s fee x%g: stable=%.2f flat=%.2f peak=%.2f B&H=%.2f", symbol, m, s["s_oos_sharpe_median"], s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
     for tf in tfs:
         s = base if tf == "15m" and base else wf_summary(walk_forward(load_ohlcv(symbol, tf, days), tf, symbol, fee, with_dgt=False, max_grids=max_grids))
-        rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "f_pct_profit", "folds")}})
-        log.info("SENS %s tf %s: flat=%.2f peak=%.2f B&H=%.2f", symbol, tf, s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
+        rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("s_oos_sharpe_median", "f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "s_pct_profit", "folds")}})
+        log.info("SENS %s tf %s: stable=%.2f flat=%.2f peak=%.2f B&H=%.2f", symbol, tf, s["s_oos_sharpe_median"], s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
     (Path(__file__).parent / "results" / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")
     return rows
 
@@ -515,15 +553,20 @@ def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRID
     out.parent.mkdir(exist_ok=True)
     f.to_csv(out, index=False)
     f["fee"] = fee
-    pre = "f_" if DEFAULT_PICK == "flat" else ""
+    pre = PICK_PREFIX[DEFAULT_PICK]
     gr, bh, tt = oos_returns(df, f, pre, with_ts=True)
     eq_g, eq_b = np.concatenate([[1.0], np.cumprod(1 + gr)]), np.concatenate([[1.0], np.cumprod(1 + bh)])
     mg, mb = metrics(eq_g, bpy), metrics(eq_b, bpy)
     lo, pt, hi = block_bootstrap_sharpe(gr, bpy)
-    # tham số khuyến nghị: chọn trên train_days cuối (dữ liệu mới nhất), tương đối theo giá hiện tại
-    nbar = train * 86_400_000 // BAR_MS[tf]
-    res = sweep(df.close.values[-nbar:], sp, fee, bpy, max_grids=max_grids)
-    rec = smooth_pick(res, sp) if DEFAULT_PICK == "flat" else res.iloc[0]
+    # tham số khuyến nghị: cùng quy trình như mỗi fold, trên dữ liệu mới nhất (IS ngay trước tuần OOS-select cuối), tương đối theo giá hiện tại
+    nsel = SELECT_DAYS * 86_400_000 // BAR_MS[tf]
+    nis = train * 86_400_000 // BAR_MS[tf]
+    px_all = df.close.values
+    res = sweep(px_all[-(nsel + nis):-nsel], sp, fee, bpy, max_grids=max_grids)
+    if DEFAULT_PICK == "stable":
+        rec = pd.Series(stable_pick(res, sp, px_all[-nsel:], fee, bpy))
+    else:
+        rec = smooth_pick(res, sp) if DEFAULT_PICK == "flat" else res.iloc[0]
     st = stability(f, sp, pre)
     last = float(df.close.iloc[-1])
     row = {"symbol": symbol, "tf": tf, "fee": fee, "folds": len(f), "oos_sharpe_median": f[pre + "oos_sharpe"].median(),
@@ -582,10 +625,12 @@ def main():
     ap.add_argument("--walkforward", action="store_true", help="STEP 5: walk-forward OOS")
     ap.add_argument("--stats", action="store_true", help="STEP 8: CI bootstrap + Deflated Sharpe")
     ap.add_argument("--sensitivity", action="store_true", help="STEP 8: độ nhạy theo phí và timeframe (chậm)")
-    ap.add_argument("--train", type=int, default=90)
-    ap.add_argument("--test", type=int, default=30)
-    ap.add_argument("--step", type=int, default=30)
+    ap.add_argument("--train", type=int, default=28, help="độ dài IS (ngày): tìm tham số tối ưu")
+    ap.add_argument("--select", type=int, default=SELECT_DAYS, help="độ dài OOS (ngày): tìm tham số ổn định")
+    ap.add_argument("--test", type=int, default=7, help="độ dài tuần forward (ngày): đo hiệu suất")
+    ap.add_argument("--step", type=int, default=7, help="bước trượt (ngày)")
     a = ap.parse_args()
+    globals()["SELECT_DAYS"] = a.select
     LOG_PATH.parent.mkdir(exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                         handlers=[logging.StreamHandler(), logging.FileHandler(LOG_PATH, encoding="utf-8")])

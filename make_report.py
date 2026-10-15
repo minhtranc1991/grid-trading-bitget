@@ -29,6 +29,8 @@ def parse_log(text):
             runs.append(cur)
         elif cur is not None:
             sym = msg.split(" ")[0]
+            if sym not in SYMS:
+                continue
             d = cur["syms"].setdefault(sym, {"t0": prev})
             if (m := re.search(r"cache (\d+) -> (\d+) bars, fetched (\d+)", msg)):
                 d.update(cache_before=int(m[1]), cache_after=int(m[2]), fetched=int(m[3]))
@@ -43,6 +45,27 @@ def parse_log(text):
             d.pop("t0", None)
             d.pop("t_last", None)
     return runs
+
+
+def load_sweep(s):
+    p = g.LOG_PATH.parent / f"sweep_{s}.json"
+    if not p.exists():
+        return None
+    j = json.loads(p.read_text(encoding="utf-8"))
+    df = pd.DataFrame(j["rows"])
+    pv = df[np.isclose(df.dl, df.dh)].pivot_table(index="dl", columns="n", values="sharpe", aggfunc="max")
+    top = df.head(10)
+    return {"window": j["window_days"], "fee": j["fee"], "combos": j["combos"], "passed": j["passed"], "bh": j["bh"],
+            "top": top.round(4).to_dict("records"), "bottom": df.tail(5).round(4).to_dict("records"),
+            "dl": [float(x) for x in pv.index], "n": [int(x) for x in pv.columns],
+            "heat": [[None if pd.isna(v) else round(float(v), 2) for v in row] for row in pv.values],
+            "beat": float((df.sharpe > j["bh"]["sharpe"]).mean() * 100), "median": float(df.sharpe.median()),
+            "topwide": int((top.dh == df.dh.max()).sum()), "dhmax": float(df.dh.max())}
+
+
+def progress():
+    txt = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
+    return [{"done": d == "x", "n": int(n), "text": t.strip()} for d, n, t in re.findall(r"- \[( |x)\] \*\*STEP (\d+)\*\* (.+)", txt)]
 
 
 def build():
@@ -103,7 +126,7 @@ def build():
         "td": ms(vol.index), "vol": {s: r4(vol[s]) for s in SYMS},
         "months": months, "mret": {s: r4(mret[s] * 100) for s in SYMS},
         "corr": ret.corr().round(3).values.tolist(),
-        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
+        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "progress": progress(), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
         "rawlog": g.LOG_PATH.read_text(encoding="utf-8"),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }

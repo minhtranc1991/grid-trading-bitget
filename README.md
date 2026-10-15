@@ -10,6 +10,9 @@ Backtest + walk-forward out-of-sample, chỉ dùng dữ liệu công khai, khôn
 ```
 pip install -r requirements.txt
 python grid_optimizer.py --symbols BTCUSDT ETHUSDT PAXGUSDT XAUTUSDT --tf 15m --days 540
+python grid_optimizer.py --sweep                          # STEP 4 cho cả 4 cặp, cửa sổ 90 ngày cuối
+python grid_optimizer.py --symbols BTCUSDT --sweep --window 90 --fee 0.001   # chỉ một cặp
+python make_report.py                                     # cập nhật results/report.html
 pytest
 ```
 
@@ -17,7 +20,11 @@ Hiện tại CLI tải/cache nến vào `data/{symbol}_{tf}.csv`, in số nến,
 Lần sau chạy chỉ tải phần thiếu. CSV nằm trong `.gitignore`. Mọi lần chạy được ghi nối vào `results/run.log` (dùng `log.info` cho các step sau).
 
 **Báo cáo trực quan:** `python make_report.py` đọc `results/run.log` + `data/*.csv` và ghi `results/report.html` (tự đủ, mở bằng trình duyệt).
-Gồm giá chuẩn hóa, drawdown, vol 30d, phân phối lợi suất, scatter regime (Efficiency Ratio 30 ngày), chỉ số B&H, heatmap tháng, tương quan, lịch fold, lịch sử chạy. Tạo lại sau mỗi lần chạy mới.
+Gồm tiến độ các step, giá chuẩn hóa, drawdown, vol 30d, phân phối lợi suất, scatter regime (Efficiency Ratio 30 ngày), chỉ số B&H, heatmap tháng, tương quan, lịch fold, kết quả sweep STEP 4 (top/bottom, heatmap, so với B&H cùng cửa sổ), lịch sử chạy. Mỗi step mới thêm một mục vào báo cáo. Tạo lại sau mỗi lần chạy mới.
+
+**Sweep (STEP 4, IN-SAMPLE):** `sweep(prices, space, fee)` quét dl, dh, n, mode theo `space_for(symbol)`; lọc bước% nhỏ nhất ≥ 2·fee·2, n ≤ `MAX_GRIDS` (cần xác minh), trades ≥ 20. Heatmap dl × n lấy lát cắt đối xứng dh = dl.
+Kết quả BTC 90 ngày cuối: 1622/2200 tổ hợp qua lọc, 0.6 giây; Sharpe top-1 3.45 so với B&H cùng cửa sổ 3.22 (+29%). Các top đều có dh = 50%, tức là gần như giữ coin: lợi nhuận là drift, không phải edge của grid. Chưa dùng để kết luận; xem STEP 5.
+Cả 4 cặp (90 ngày): sweep ghi `results/sweep_{SYMBOL}.json` và `results/heatmap_{BTC,ETH,PAXG,XAUT}.png`. PAXG/XAUT: Sharpe top-1 (0.26–0.30) thấp hơn B&H cùng cửa sổ (0.80–0.83).
 
 **Hàm lõi:** `load_ohlcv`, `grid_equity` (equity chuẩn hóa, vốn đầu = 1), `grid_stats` (số giao dịch, turnover), `metrics`, `buy_and_hold`.
 
@@ -41,7 +48,7 @@ Gồm giá chuẩn hóa, drawdown, vol 30d, phân phối lợi suất, scatter r
 - [x] **STEP 1** Tải & cache dữ liệu (`load_ohlcv`): 4 cặp × 15m, ~52000 nến, 0 gap, test ts tăng/không trùng/không NaN
 - [x] **STEP 2** Grid backtest lõi `grid_equity(prices, low, high, n, mode, fee)` vector hóa + 4 test (equity[0]=1, giá đứng yên, k line, khớp vòng lặp thuần Python sai số <1e-9)
 - [x] **STEP 3** Chỉ số: `metrics` (Sharpe annualized, return, MDD, số giao dịch, turnover) + `buy_and_hold`
-- [ ] **STEP 4** Quét tham số trên một cửa sổ (`sweep`), lọc bước% ≥ 2·fee·hệ số, n ≤ giới hạn lưới, trades ≥ 20; heatmap `results/heatmap_BTC.png`. Ghi chú in-sample
+- [x] **STEP 4** Quét tham số trên một cửa sổ (`sweep`), lọc bước% ≥ 2·fee·hệ số, n ≤ giới hạn lưới, trades ≥ 20; heatmap `results/heatmap_BTC.png`. Ghi chú in-sample
 - [ ] **STEP 5** Walk-forward: train 90d → test 30d, trượt 30d; `results/{symbol}_folds.csv`; test không rò rỉ
 - [ ] **STEP 6** Tham số "phẳng" (làm mượt Sharpe 3×3) vs đỉnh nhọn; báo cáo ổn định median/IQR, cờ UNSTABLE
 - [ ] **STEP 7** Baseline DGT (reset lưới khi phá biên) + bảng OOS B&H vs grid cố định vs tối ưu vs DGT

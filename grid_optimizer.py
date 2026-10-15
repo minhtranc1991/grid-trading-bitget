@@ -416,9 +416,9 @@ def _wf_fold(t):
     else:
         dm = dm2 = {"sharpe": np.nan, "return": np.nan, "mdd": np.nan}
         dres = dres2 = np.nan
-    is_last, sel_last, t_start, t_end = ts_bounds
+    is_first, is_last, sel_last, t_start, t_end = ts_bounds
     return k, {
-        "fold": k, "is_last_ts": is_last, "train_last_ts": sel_last, "test_start": t_start, "test_end": t_end,
+        "fold": k, "is_start": is_first, "is_last_ts": is_last, "train_last_ts": sel_last, "test_start": t_start, "test_end": t_end,
         "dgt_sharpe": dm["sharpe"], "dgt_return": dm["return"], "dgt_mdd": dm["mdd"], "dgt_resets": dres,
         "dgtdef_sharpe": dm2["sharpe"], "dgtdef_return": dm2["return"], "dgtdef_mdd": dm2["mdd"], "dgtdef_resets": dres2,
         "s_dl": st["dl"], "s_dh": st["dh"], "s_n": st["n"], "s_mode": st["mode"], "s_step_pct": st["step_pct"],
@@ -452,7 +452,7 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, st
         if c > ts[-1] + BAR_MS[tf]:
             break
         i0, i1, i2, i3 = np.searchsorted(ts, [a, b, s_end, c])
-        bounds = (int(ts[i1 - 1]), int(ts[i2 - 1]), int(ts[i2]), int(ts[i3 - 1]))
+        bounds = (int(ts[i0]), int(ts[i1 - 1]), int(ts[i2 - 1]), int(ts[i2]), int(ts[i3 - 1]))
         tasks.append((k, px[i0:i1], px[i1:i2], px[i2:i3], bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k))
         k += 1
     if jobs > 1 and len(tasks) > 1:
@@ -683,6 +683,7 @@ def main():
     ap.add_argument("--select", type=int, default=SELECT_DAYS, help="độ dài OOS (ngày): tìm tham số ổn định")
     ap.add_argument("--test", type=int, default=7, help="độ dài tuần forward (ngày): đo hiệu suất")
     ap.add_argument("--step", type=int, default=7, help="bước trượt (ngày)")
+    ap.add_argument("--no-report", action="store_true", help="không tự cập nhật results/report.html sau khi chạy")
     ap.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1), help="số tiến trình song song cho các fold (tối đa 8)")
     a = ap.parse_args()
     globals()["SELECT_DAYS"] = a.select
@@ -714,6 +715,13 @@ def main():
         cols = ["symbol", "oos_sharpe_median", "oos_sharpe_pooled", "oos_return", "oos_mdd", "pct_fold_profit", "bh_return",
                 "rec_dl", "rec_dh", "rec_n", "rec_step_pct", "rec_mode", "unstable", "edge"]
         print(pd.DataFrame(rows)[cols].round(3).to_string(index=False))
+    if not a.no_report:  # luôn làm mới results/report.html sau mỗi lần chạy
+        try:
+            import make_report
+
+            log.info("REPORT -> %s", make_report.generate())
+        except Exception as e:  # báo cáo hỏng không được làm hỏng kết quả tối ưu
+            log.warning("REPORT lỗi: %r", e)
 
 
 if __name__ == "__main__":

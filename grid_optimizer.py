@@ -306,7 +306,7 @@ def _grid_oos(P, dl, dh, n, mode, fee, bpy):
     return metrics(grid_equity(P, low, high, n, mode, fee), bpy, trades, turn)
 
 
-def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, step_days=30, space=None, safety=2.0):
+def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, step_days=30, space=None, safety=2.0, with_dgt=True):
     """Mỗi fold: sweep trên train [a,b), chọn tham số tốt nhất, áp tại giá đầu test [b,c). Chỉ dùng dữ liệu < b để chọn."""
     ts, px = df.ts.values, df.close.values
     bpy, space, rows, k = BARS_PER_YEAR[tf], space or space_for(symbol), [], 0
@@ -327,10 +327,14 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, s
         dfl = _grid_oos(te, **DEFAULT_GRID, fee=fee, bpy=bpy)
         bh = metrics(buy_and_hold(te), bpy)
         fl = smooth_pick(res, space)
-        deq, dres = dgt_equity(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, True)
-        dm = metrics(deq, bpy)
-        deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
-        dm2 = metrics(deq2, bpy)
+        if with_dgt:
+            deq, dres = dgt_equity(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, True)
+            dm = metrics(deq, bpy)
+            deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
+            dm2 = metrics(deq2, bpy)
+        else:
+            dm = dm2 = {"sharpe": np.nan, "return": np.nan, "mdd": np.nan}
+            dres = dres2 = np.nan
         foos = _grid_oos(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, bpy)
         rows.append({"dgt_sharpe": dm["sharpe"], "dgt_return": dm["return"], "dgt_mdd": dm["mdd"], "dgt_resets": dres,
                      "dgtdef_sharpe": dm2["sharpe"], "dgtdef_return": dm2["return"], "dgtdef_mdd": dm2["mdd"], "dgtdef_resets": dres2,
@@ -382,6 +386,93 @@ def run_wf(symbol, tf, df, train, test, step, fee):
     return f
 
 
+# --- STEP 8: đánh giá thống kê & độ nhạy ---
+def oos_returns(df, folds, prefix="f_"):
+    """Lợi suất từng bar, nối các fold OOS: (grid theo tham số chọn ở fold, B&H cùng cửa sổ)."""
+    ts, px = df.ts.values, df.close.values
+    gr, bh = [], []
+    for r in folds.to_dict("records"):
+        i1, i2 = np.searchsorted(ts, r["test_start"]), np.searchsorted(ts, r["test_end"], side="right")
+        te = px[i1:i2]
+        eq = grid_equity(te, te[0] * (1 - r[prefix + "dl"]), te[0] * (1 + r[prefix + "dh"]), int(r[prefix + "n"]), r[prefix + "mode"], r["fee"])
+        gr.append(np.diff(eq) / eq[:-1])
+        bh.append(np.diff(te) / te[:-1])
+    return np.concatenate(gr), np.concatenate(bh)
+
+
+def block_bootstrap_sharpe(r, bpy, block=96, n=2000, seed=0):
+    """Khoảng tin cậy 95% của Sharpe annualized bằng bootstrap theo khối (mặc định 1 ngày 15m)."""
+    r = np.asarray(r, float)
+    nb = int(np.ceil(len(r) / block))
+    pad = nb * block - len(r)
+    x = np.concatenate([r, np.zeros(pad)]).reshape(nb, block)
+    L = np.full(nb, block)
+    L[-1] -= pad
+    s1, s2 = x.sum(1), (x ** 2).sum(1)
+    idx = np.random.default_rng(seed).integers(0, nb, (n, nb))
+    cnt = L[idx].sum(1)
+    mean = s1[idx].sum(1) / cnt
+    var = (s2[idx].sum(1) - cnt * mean ** 2) / (cnt - 1)
+    sh = mean / np.sqrt(var) * np.sqrt(bpy)
+    pt = r.mean() / r.std(ddof=1) * np.sqrt(bpy)
+    return float(np.percentile(sh, 2.5)), float(pt), float(np.percentile(sh, 97.5))
+
+
+def deflated_sharpe(r, n_trials, trial_var):
+    """(PSR so với 0, DSR, SR0) theo Bailey & López de Prado; Sharpe tính theo từng bar, trial_var = phương sai Sharpe/bar giữa các thử nghiệm."""
+    from statistics import NormalDist
+    from scipy.stats import kurtosis, skew  # scipy đi kèm pandas stack; nếu thiếu thì pip install scipy
+    r = np.asarray(r, float)
+    T, nd = len(r), NormalDist()
+    sr = r.mean() / r.std(ddof=1)
+    sk, ku = skew(r), kurtosis(r, fisher=False)
+    den = np.sqrt(max(1e-12, 1 - sk * sr + (ku - 1) / 4 * sr ** 2))
+    gam = 0.5772156649
+    sr0 = np.sqrt(trial_var) * ((1 - gam) * nd.inv_cdf(1 - 1 / n_trials) + gam * nd.inv_cdf(1 - 1 / (n_trials * np.e)))
+    return nd.cdf(sr * np.sqrt(T - 1) / den), nd.cdf((sr - sr0) * np.sqrt(T - 1) / den), float(sr0)
+
+
+def run_stats(symbol, tf, df, fee, train=90, test=30, step=30, window=90):
+    bpy = BARS_PER_YEAR[tf]
+    f = walk_forward(df, tf, symbol, fee, train, test, step, with_dgt=False)
+    f["fee"] = fee
+    gr, bh = oos_returns(df, f)
+    ci_g, ci_b, ci_d = block_bootstrap_sharpe(gr, bpy), block_bootstrap_sharpe(bh, bpy), block_bootstrap_sharpe(gr - bh, bpy)
+    sp = space_for(symbol)
+    ntr = len(sp["dl"]) * len(sp["dh"]) * len(sp["n"]) * len(sp["mode"])
+    nbar = window * 86_400_000 // BAR_MS[tf]
+    sweep_sh = sweep(df.close.values[-nbar:], sp, fee, bpy).sharpe.values / np.sqrt(bpy)  # Sharpe/bar của các thử nghiệm
+    psr, dsr, sr0 = deflated_sharpe(gr, ntr, float(np.var(sweep_sh, ddof=1)))
+    zero_in = ci_g[0] <= 0 <= ci_g[2]
+    verdict = ("chưa có bằng chứng edge (CI 95% của Sharpe OOS chứa 0)" if zero_in else
+               ("Sharpe OOS âm có ý nghĩa thống kê" if ci_g[2] < 0 else "Sharpe OOS dương có ý nghĩa, cần kiểm tra DSR"))
+    out = {"symbol": symbol, "tf": tf, "fee": fee, "folds": len(f), "bars": int(len(gr)), "n_trials": ntr,
+           "grid_ci": ci_g, "bh_ci": ci_b, "diff_ci": ci_d, "psr0": psr, "dsr": dsr, "sr0_bar": sr0,
+           "sr0_annual": sr0 * np.sqrt(bpy), "verdict": verdict}
+    path = Path(__file__).parent / "results" / f"stats_{symbol}.json"
+    path.write_text(json.dumps(out), encoding="utf-8")
+    log.info("STATS %s: Sharpe OOS %.2f [%.2f, %.2f], B&H %.2f [%.2f, %.2f], hiệu %.2f [%.2f, %.2f]; PSR(0)=%.3f DSR=%.3f, %d tổ hợp; %s",
+             symbol, ci_g[1], ci_g[0], ci_g[2], ci_b[1], ci_b[0], ci_b[2], ci_d[1], ci_d[0], ci_d[2], psr, dsr, ntr, verdict)
+    return out
+
+
+def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "1h")):
+    """Sharpe OOS trung vị (phẳng, đỉnh nhọn, B&H) theo phí (x0.5/1/2 ở 15m) và theo timeframe (phí 1x)."""
+    rows, base = [], None
+    df15 = load_ohlcv(symbol, "15m", days)
+    for m in fees:
+        s = wf_summary(walk_forward(df15, "15m", symbol, fee * m, with_dgt=False))
+        base = s if m == 1.0 else base
+        rows.append({"kind": "fee", "label": f"{m:g}x ({fee * m:.4f})", **{k: s[k] for k in ("f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "f_pct_profit", "folds")}})
+        log.info("SENS %s fee x%g: flat=%.2f peak=%.2f B&H=%.2f", symbol, m, s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
+    for tf in tfs:
+        s = base if tf == "15m" and base else wf_summary(walk_forward(load_ohlcv(symbol, tf, days), tf, symbol, fee, with_dgt=False))
+        rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "f_pct_profit", "folds")}})
+        log.info("SENS %s tf %s: flat=%.2f peak=%.2f B&H=%.2f", symbol, tf, s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
+    (Path(__file__).parent / "results" / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")
+    return rows
+
+
 def report(symbol, tf, df):
     bar = BAR_MS[tf]
     gaps = int(((df.ts.diff().dropna() // bar) - 1).clip(lower=0).sum())
@@ -398,6 +489,8 @@ def main():
     ap.add_argument("--window", type=int, default=90, help="số ngày của cửa sổ sweep")
     ap.add_argument("--fee", type=float, default=DEFAULT_FEE)
     ap.add_argument("--walkforward", action="store_true", help="STEP 5: walk-forward OOS")
+    ap.add_argument("--stats", action="store_true", help="STEP 8: CI bootstrap + Deflated Sharpe")
+    ap.add_argument("--sensitivity", action="store_true", help="STEP 8: độ nhạy theo phí và timeframe (chậm)")
     ap.add_argument("--train", type=int, default=90)
     ap.add_argument("--test", type=int, default=30)
     ap.add_argument("--step", type=int, default=30)
@@ -415,6 +508,10 @@ def main():
             run_sweep(s, a.tf, df, a.window, a.fee)
         if a.walkforward:
             run_wf(s, a.tf, df, a.train, a.test, a.step, a.fee)
+        if a.stats:
+            run_stats(s, a.tf, df, a.fee, a.train, a.test, a.step, a.window)
+        if a.sensitivity:
+            run_sensitivity(s, a.days, a.fee)
 
 
 if __name__ == "__main__":

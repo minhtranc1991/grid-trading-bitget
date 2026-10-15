@@ -13,6 +13,8 @@ python grid_optimizer.py --symbols BTCUSDT ETHUSDT PAXGUSDT XAUTUSDT --tf 15m --
 python grid_optimizer.py --sweep                          # STEP 4 cho cả 4 cặp, cửa sổ 90 ngày cuối
 python grid_optimizer.py --symbols BTCUSDT --sweep --window 90 --fee 0.001   # chỉ một cặp
 python grid_optimizer.py --walkforward                    # STEP 5: 4 cặp, train 90 / test 30 / step 30 -> results/{SYMBOL}_folds.csv
+python grid_optimizer.py --stats                          # STEP 8: CI bootstrap + Deflated Sharpe -> results/stats_{SYMBOL}.json
+python grid_optimizer.py --sensitivity                    # STEP 8: độ nhạy phí x0.5/1/2 và timeframe 5m/15m/1h (chậm, ~10 phút, tải nến 5m/1h)
 python make_report.py                                     # cập nhật results/report.html
 pytest
 ```
@@ -48,6 +50,11 @@ Bảng OOS trung vị Sharpe (15 fold/cặp) — BTC / ETH / PAXG / XAUT:
 
 DGT không cải thiện: reset liên tục (trung vị 3–4 lần/fold) khóa lỗ và trả thêm phí. Không có chiến lược grid nào vượt B&H ở cả 4 cặp.
 
+**Thống kê (STEP 8):** `block_bootstrap_sharpe` (khối 1 ngày, 2000 lần) cho CI 95% của Sharpe OOS gộp các fold; `deflated_sharpe` trả PSR(0) và DSR theo số tổ hợp thử (2200 crypto, 1408 vàng) và phương sai Sharpe giữa các thử nghiệm.
+Sharpe OOS gộp (grid phẳng) [CI 95%] vs B&H: BTC −1.28 [−2.98, 0.31] vs −0.48; ETH −1.20 [−2.79, 0.44] vs −0.24; PAXG −1.08 [−2.67, 0.48] vs +0.79; XAUT −1.13 [−2.69, 0.42] vs +0.81. DSR ≈ 0 ở cả 4 cặp.
+**Kết luận: chưa có bằng chứng edge** (CI chứa 0 ở cả 4 cặp); ở PAXG/XAUT grid kém B&H có ý nghĩa thống kê (CI hiệu [−4.45, −1.18] / [−4.81, −1.31]).
+Độ nhạy (Sharpe OOS trung vị, phẳng): phí 0.5×/1×/2× → BTC −1.49/−1.42/−2.16; ETH −0.90/−1.03/−1.13; PAXG −1.21/−2.00/−2.49; XAUT −0.92/−2.03/−2.33. Phí cao hơn làm kém đi ở mọi cặp; không có cấu hình timeframe nào (5m/15m/1h) vượt B&H. 1h tốt nhất cho ETH/PAXG/XAUT, nhưng chênh lệch giữa các timeframe nằm trong nhiễu (B&H trung vị của ETH dao động −0.13 đến +0.57 chỉ vì lấy mẫu).
+
 **Hàm lõi:** `load_ohlcv`, `grid_equity` (equity chuẩn hóa, vốn đầu = 1), `grid_stats` (số giao dịch, turnover), `metrics`, `buy_and_hold`.
 
 **Lưu ý lý thuyết:** equity của grid chỉ phụ thuộc giá hiện tại và số line đã cắt, không phụ thuộc đường đi. Giá đi lên-xuống rồi về chỗ cũ thì equity gộp = 1, chỉ còn trừ phí. Lãi chỉ có khi giá kết thúc ở chỗ khác chỗ bắt đầu (drift/regime).
@@ -74,7 +81,7 @@ DGT không cải thiện: reset liên tục (trung vị 3–4 lần/fold) khóa 
 - [x] **STEP 5** Walk-forward: train 90d → test 30d, trượt 30d; `results/{symbol}_folds.csv`; test không rò rỉ
 - [x] **STEP 6** Tham số "phẳng" (làm mượt Sharpe 3×3) vs đỉnh nhọn; báo cáo ổn định median/IQR, cờ UNSTABLE
 - [x] **STEP 7** Baseline DGT (reset lưới khi phá biên) + bảng OOS B&H vs grid cố định vs tối ưu vs DGT
-- [ ] **STEP 8** Đánh giá thống kê: số tổ hợp đã thử, Deflated Sharpe / block bootstrap, độ nhạy phí (0.5×/1×/2×) và timeframe (5m/15m/1h)
+- [x] **STEP 8** Đánh giá thống kê: số tổ hợp đã thử, Deflated Sharpe / block bootstrap, độ nhạy phí (0.5×/1×/2×) và timeframe (5m/15m/1h)
 - [ ] **STEP 9** CLI đầy đủ + `results/summary.csv` + equity OOS vs B&H + README giới hạn; end-to-end < vài phút, pytest pass
 
 ## Thông tin nền

@@ -34,6 +34,20 @@ Kết quả (Sharpe trung vị OOS / B&H / lưới mặc định): BTC −2.00 /
 So sánh Sharpe OOS trung vị, đỉnh nhọn vs phẳng: BTC −2.00 vs −1.42; ETH −1.06 vs −1.03; PAXG −1.99 vs −2.00; XAUT −1.65 vs −2.03; trung bình −1.68 vs −1.62.
 **Mặc định = phẳng** (`DEFAULT_PICK`): trung bình nhỉnh hơn và ít nhạy nhiễu, nhưng chênh lệch nằm trong nhiễu (thắng 2/4 cặp, 15 fold) và cả hai đều kém B&H, nên đây không phải bằng chứng edge. Cả 4 cặp, cả hai cách chọn, đều bị cờ UNSTABLE; dh median nằm ở biên trên của không gian tìm kiếm (BTC/ETH 50%/35%, vàng 8%), tức là bộ tối ưu luôn đẩy dh lên mức tối đa.
 
+**DGT (STEP 7):** `dgt_equity(prices, dl, dh, n, mode, fee)` dựng lại lưới quanh giá mới khi giá phá low/high, vốn mới = equity hiện tại; phá trên thì đang toàn tiền mặt, phá dưới thì đang giữ toàn coin; trả phí tái cân bằng mỗi lần reset. Khi không bao giờ phá biên, DGT trùng khít grid thường (có test).
+Bảng OOS trung vị Sharpe (15 fold/cặp) — BTC / ETH / PAXG / XAUT:
+
+| Chiến lược | BTC | ETH | PAXG | XAUT |
+|---|---|---|---|---|
+| Buy & Hold | −0.32 | −0.13 | −0.26 | −0.13 |
+| Grid cố định mặc định (±10%, n=20) | −0.69 | −1.25 | −1.70 | −1.50 |
+| Grid tối ưu: đỉnh nhọn | −2.00 | −1.06 | −1.99 | −1.65 |
+| Grid tối ưu: phẳng | −1.42 | −1.03 | −2.00 | −2.03 |
+| DGT (tham số phẳng) | −2.60 | −2.25 | −3.39 | −3.33 |
+| DGT (lưới mặc định) | −2.92 | −3.15 | −2.63 | −1.58 |
+
+DGT không cải thiện: reset liên tục (trung vị 3–4 lần/fold) khóa lỗ và trả thêm phí. Không có chiến lược grid nào vượt B&H ở cả 4 cặp.
+
 **Hàm lõi:** `load_ohlcv`, `grid_equity` (equity chuẩn hóa, vốn đầu = 1), `grid_stats` (số giao dịch, turnover), `metrics`, `buy_and_hold`.
 
 **Lưu ý lý thuyết:** equity của grid chỉ phụ thuộc giá hiện tại và số line đã cắt, không phụ thuộc đường đi. Giá đi lên-xuống rồi về chỗ cũ thì equity gộp = 1, chỉ còn trừ phí. Lãi chỉ có khi giá kết thúc ở chỗ khác chỗ bắt đầu (drift/regime).
@@ -59,7 +73,7 @@ So sánh Sharpe OOS trung vị, đỉnh nhọn vs phẳng: BTC −2.00 vs −1.4
 - [x] **STEP 4** Quét tham số trên một cửa sổ (`sweep`), lọc bước% ≥ 2·fee·hệ số, n ≤ giới hạn lưới, trades ≥ 20; heatmap `results/heatmap_BTC.png`. Ghi chú in-sample
 - [x] **STEP 5** Walk-forward: train 90d → test 30d, trượt 30d; `results/{symbol}_folds.csv`; test không rò rỉ
 - [x] **STEP 6** Tham số "phẳng" (làm mượt Sharpe 3×3) vs đỉnh nhọn; báo cáo ổn định median/IQR, cờ UNSTABLE
-- [ ] **STEP 7** Baseline DGT (reset lưới khi phá biên) + bảng OOS B&H vs grid cố định vs tối ưu vs DGT
+- [x] **STEP 7** Baseline DGT (reset lưới khi phá biên) + bảng OOS B&H vs grid cố định vs tối ưu vs DGT
 - [ ] **STEP 8** Đánh giá thống kê: số tổ hợp đã thử, Deflated Sharpe / block bootstrap, độ nhạy phí (0.5×/1×/2×) và timeframe (5m/15m/1h)
 - [ ] **STEP 9** CLI đầy đủ + `results/summary.csv` + equity OOS vs B&H + README giới hạn; end-to-end < vài phút, pytest pass
 

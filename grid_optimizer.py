@@ -79,33 +79,62 @@ def load_ohlcv(symbol, tf="15m", days=540):
     return df
 
 
-def _cross(P, low, high, n, mode):
-    lines = (np.linspace if mode == "arithmetic" else np.geomspace)(low, high, n + 1)
-    return lines, np.searchsorted(lines, P, side="right")  # c = số line <= giá
+def _lines(low, high, n, mode):
+    return (np.linspace if mode == "arithmetic" else np.geomspace)(low, high, n + 1)
 
 
-def grid_equity(prices, low, high, n, mode="arithmetic", fee=0.0):
-    """Equity chuẩn hóa (vốn đầu = 1) của grid n khoảng giữa low..high; fee = tỷ lệ mỗi chiều.
-    Equity là hàm của (giá, số line đã cắt) nên không phụ thuộc đường đi, đúng với Chen et al."""
+def grid_sim(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
+    """Mô phỏng lưới thật theo SỰ KIỆN cắt line. Trả (equity chuẩn hóa vốn=1, số lệnh khớp sau lúc vào, turnover).
+
+    n slot; slot k mua ở L_k, bán ở L_{k+1} (mỗi slot 1 đơn vị coin). Lúc bắt đầu: slot có line bán nằm trên giá đầu
+    giữ coin (mua tại P0), các slot còn lại dự trữ tiền L_k để mua. Giá cắt lên L_j: slot j-1 bán nếu đang giữ;
+    cắt xuống L_j: slot j mua nếu đang không giữ. Phí fee tính cho mỗi lệnh (kể cả lệnh vào) và là hàm của đường đi.
+    Vốn = coin ban đầu·P0 + tiền dự trữ."""
     P = np.asarray(prices, float)
-    lines, c = _cross(P, low, high, n, mode)
-    m = n + 1
-    S = np.concatenate(([0.0], np.cumsum(lines)))
-    c0 = c[0]
-    Gv = 1.0 / ((m - c0) * P[0] + S[c0])
-    Sc = S[c]
-    fees = np.cumsum(fee * Gv * np.abs(np.diff(Sc, prepend=Sc[0])))
-    return Gv * Sc + Gv * (m - c) * P - fees
+    L = _lines(low, high, n, mode)
+    Ll = L.tolist()
+    p0 = P[0]
+    hold = (L[1:] > p0).tolist()
+    coins0 = sum(hold)
+    cash0 = float(sum(Ll[k] for k in range(n) if not hold[k]))
+    cap = coins0 * p0 + cash0
+    c = np.searchsorted(L, P, side="right")  # số line <= giá
+    dc = np.diff(c)
+    ev = np.flatnonzero(dc)
+    dcash = np.zeros(len(P))
+    dcoin = np.zeros(len(P))
+    trades, notional = 0, coins0 * p0
+    for b in ev.tolist():
+        d, c0 = int(dc[b]), int(c[b])
+        if d > 0:  # cắt lên line c0..c0+d-1 (tăng dần): slot j-1 bán tại L_j
+            for j in range(c0, c0 + d):
+                if j >= 1 and hold[j - 1]:
+                    hold[j - 1] = False
+                    dcash[b + 1] += Ll[j] * (1 - fee)
+                    dcoin[b + 1] -= 1
+                    trades += 1
+                    notional += Ll[j]
+        else:  # cắt xuống line c0-1..c0+d (giảm dần): slot j mua tại L_j
+            for j in range(c0 - 1, c0 + d - 1, -1):
+                if j <= n - 1 and not hold[j]:
+                    hold[j] = True
+                    dcash[b + 1] -= Ll[j] * (1 + fee)
+                    dcoin[b + 1] += 1
+                    trades += 1
+                    notional += Ll[j]
+    eq = (cash0 + np.cumsum(dcash) + (coins0 + np.cumsum(dcoin)) * P) / cap
+    if entry_fee:
+        eq[1:] -= fee * coins0 * p0 / cap  # phí mua coin lúc vào lưới
+    return eq, trades, float(notional / cap)
+
+
+def grid_equity(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
+    return grid_sim(prices, low, high, n, mode, fee, entry_fee)[0]
 
 
 def grid_stats(prices, low, high, n, mode="arithmetic"):
-    """(số giao dịch = tổng |Δc|, turnover = tổng notional giao dịch / vốn đầu)."""
-    P = np.asarray(prices, float)
-    lines, c = _cross(P, low, high, n, mode)
-    S = np.concatenate(([0.0], np.cumsum(lines)))
-    c0 = c[0]
-    Gv = 1.0 / ((n + 1 - c0) * P[0] + S[c0])
-    return int(np.abs(np.diff(c)).sum()), float(Gv * np.abs(np.diff(S[c])).sum())
+    """(số lệnh khớp sau lúc vào, turnover = tổng notional giao dịch kể cả lúc vào / vốn đầu)."""
+    return grid_sim(prices, low, high, n, mode)[1:]
 
 
 BARS_PER_YEAR = {"1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520, "1h": 8760, "4h": 2190}  # crypto 24/7
@@ -163,10 +192,10 @@ def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, mi
                     st = step_pct(low, high, n, mode)
                     if st < 2 * fee * safety:
                         continue
-                    trades, turn = grid_stats(P, low, high, n, mode)
+                    eq, trades, turn = grid_sim(P, low, high, n, mode, fee)
                     if trades < min_trades:
                         continue
-                    m = metrics(grid_equity(P, low, high, n, mode, fee), bars_per_year, trades, turn)
+                    m = metrics(eq, bars_per_year, trades, turn)
                     rows.append({"dl": dl, "dh": dh, "n": n, "mode": mode, "step_pct": st, **m})
     cols = ["dl", "dh", "n", "mode", "step_pct", "sharpe", "return", "mdd", "trades", "turnover"]
     return pd.DataFrame(rows, columns=cols).sort_values("sharpe", ascending=False).reset_index(drop=True)
@@ -234,21 +263,23 @@ def dgt_equity(prices, dl, dh, n, mode="arithmetic", fee=0.0, return_resets=Fals
     Phá trên: lưới đã bán hết -> toàn tiền mặt, tái đầu tư vào lưới mới. Phá dưới: lưới đang giữ toàn coin, vốn mới = giá trị coin + tiền.
     Phí tái cân bằng = fee · phần vốn phải mua/bán để chuyển sang trạng thái ban đầu của lưới mới."""
     P = np.asarray(prices, float)
-    T, eq, cap, start, resets = len(P), np.empty(len(P)), 1.0, 0, 0
+    T, eq, cap, start, resets, first = len(P), np.empty(len(P)), 1.0, 0, 0, True
     while True:
         p0 = P[start]
         low, high = p0 * (1 - dl), p0 * (1 + dh)
         out = (P[start:] < low) | (P[start:] > high)
         end = start + int(np.argmax(out)) if out.any() else T - 1
-        e = grid_equity(P[start:end + 1], low, high, n, mode, fee)
+        e = grid_equity(P[start:end + 1], low, high, n, mode, fee, entry_fee=first)  # phí vào của lưới mới nằm ở bước tái cân bằng
+        first = False
         eq[start:end + 1] = cap * e
         cap *= e[-1]
         if end == T - 1:
             break
         # tái cân bằng sang trạng thái đầu của lưới mới tại giá phá biên
         nxt = P[end]
-        lines, c = _cross(np.array([nxt]), nxt * (1 - dl), nxt * (1 + dh), n, mode)
-        coin_frac = (n + 1 - c[0]) * nxt / ((n + 1 - c[0]) * nxt + lines[: c[0]].sum())
+        L = _lines(nxt * (1 - dl), nxt * (1 + dh), n, mode)
+        h = L[1:] > nxt
+        coin_frac = h.sum() * nxt / (h.sum() * nxt + L[:-1][~h].sum())
         was_cash = P[end] > high  # phá trên -> đang toàn tiền mặt
         cap *= 1 - fee * (coin_frac if was_cash else 1 - coin_frac)
         resets += 1
@@ -302,8 +333,8 @@ def stability(f, space, prefix=""):
 def _grid_oos(P, dl, dh, n, mode, fee, bpy):
     """Đặt lưới tại giá đầu của P (tham số tương đối) rồi đo hiệu suất trên P."""
     low, high = P[0] * (1 - dl), P[0] * (1 + dh)
-    trades, turn = grid_stats(P, low, high, n, mode)
-    return metrics(grid_equity(P, low, high, n, mode, fee), bpy, trades, turn)
+    eq, trades, turn = grid_sim(P, low, high, n, mode, fee)
+    return metrics(eq, bpy, trades, turn)
 
 
 def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, step_days=30, space=None, safety=2.0, with_dgt=True, max_grids=MAX_GRIDS):

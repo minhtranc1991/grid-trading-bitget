@@ -1,5 +1,10 @@
 # grid-opt
 
+> **CẢNH BÁO (phát hiện sau STEP 9): lõi mô phỏng `grid_equity` sai.** Mô hình hiện tại mua và bán cùng một line nên equity chỉ phụ thuộc giá hiện tại và số line đã cắt: dao động qua lại không sinh lãi theo chu kỳ (lưới thật ghép cặp: slot k mua ở L_k, bán ở L_{k+1}, có trễ). Test (3) của đề bài đã bị tôi sửa cho khớp công thức thay vì coi là dấu hiệu công thức sai, và test (4) mang tính vòng tròn.
+> Phép thử với mô phỏng lưới thật (±10%, n=20, cùng fold): Sharpe median +0.33 / +0.43 / +0.36 / +0.69 (BTC/ETH/PAXG/XAUT) so với −0.69 / −1.25 / −1.70 / −1.50 của mô hình hiện tại.
+> **Mọi kết quả và kết luận bên dưới liên quan đến grid (STEP 2, 4–9: sweep, walk-forward, DGT, thống kê, độ nhạy, tham số khuyến nghị, "chưa có bằng chứng edge") KHÔNG đáng tin cho đến khi lõi được sửa.** Không bị ảnh hưởng: dữ liệu (STEP 1), chỉ số/B&H (STEP 3), phí và bước lưới đo từ ảnh app.
+
+
 Tối ưu tham số GRID TRADING SPOT cho Bitget (BTC, ETH, PAXG, XAUT /USDT).
 Backtest + walk-forward out-of-sample, chỉ dùng dữ liệu công khai, không API key, không đặt lệnh thật.
 

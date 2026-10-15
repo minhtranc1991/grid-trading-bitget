@@ -17,33 +17,35 @@ OUT = Path(__file__).parent / "results" / "report.html"
 TEMPLATE = Path(__file__).parent / "report_template.html"
 
 
+LOG_LINE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3}) (?:\[(\d+)\] )?(.*)$")
+
+
 def parse_log(text):
-    runs, prev, cur = [], None, None
+    """Tách theo PID nên hai lần chạy chồng nhau không lẫn dòng; log cũ (không có PID) coi là một luồng duy nhất.
+    elapsed = từ dòng log liền trước (cùng PID) tới dòng B&H của cặp đó, tức là thời gian nạp/cache dữ liệu của cặp."""
+    runs, cur, prev = [], {}, {}
     for line in text.splitlines():
-        if len(line) < 25:
+        mt = LOG_LINE.match(line)
+        if not mt:
             continue
-        t = datetime.strptime(line[:23], "%Y-%m-%d %H:%M:%S,%f")
-        msg = line[24:]
+        t, pid, msg = datetime.strptime(mt[1], "%Y-%m-%d %H:%M:%S,%f"), mt[2] or "-", mt[3]
         if msg.startswith("RUN"):
-            cur = {"t": t.strftime("%Y-%m-%d %H:%M:%S"), "args": msg[9:], "syms": {}}
-            runs.append(cur)
-        elif cur is not None:
+            cur[pid] = {"t": t.strftime("%Y-%m-%d %H:%M:%S"), "args": msg[9:], "pid": None if pid == "-" else int(pid), "syms": {}}
+            runs.append(cur[pid])
+        elif pid in cur:
             sym = msg.split(" ")[0]
-            if sym not in SYMS:
-                continue
-            d = cur["syms"].setdefault(sym, {"t0": prev})
-            if (m := re.search(r"cache (\d+) -> (\d+) bars, fetched (\d+)", msg)):
-                d.update(cache_before=int(m[1]), cache_after=int(m[2]), fetched=int(m[3]))
-            elif (m := re.search(r": (\d+) bars, (.+) -> (.+), gap=(\d+)", msg)):
-                d.update(bars=int(m[1]), start=m[2], end=m[3], gap=int(m[4]))
-            elif "B&H" in msg:
-                d["elapsed"] = round((t - d["t0"]).total_seconds(), 2)
-            d["t_last"] = t
-        prev = t
+            if sym in SYMS:
+                d = cur[pid]["syms"].setdefault(sym, {"t0": prev.get(pid, t)})
+                if (m := re.search(r"cache (\d+) -> (\d+) bars, fetched (\d+)", msg)):
+                    d.update(cache_before=int(m[1]), cache_after=int(m[2]), fetched=int(m[3]))
+                elif (m := re.search(r": (\d+) bars, (.+) -> (.+), gap=(\d+)", msg)):
+                    d.update(bars=int(m[1]), start=m[2], end=m[3], gap=int(m[4]))
+                elif "B&H" in msg:
+                    d["elapsed"] = round((t - d["t0"]).total_seconds(), 2)
+        prev[pid] = t
     for r in runs:
         for d in r["syms"].values():
             d.pop("t0", None)
-            d.pop("t_last", None)
     return runs
 
 

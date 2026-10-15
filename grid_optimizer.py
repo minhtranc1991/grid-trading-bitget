@@ -688,7 +688,7 @@ def main():
     globals()["SELECT_DAYS"] = a.select
     globals()["JOBS"] = max(1, min(a.jobs, 8))
     LOG_PATH.parent.mkdir(exist_ok=True)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(process)d] %(message)s",  # PID để tách các lần chạy chồng nhau
                         handlers=[logging.StreamHandler(), logging.FileHandler(LOG_PATH, encoding="utf-8")])
     log.info("RUN args=%s", vars(a))
     final = not (a.sweep or a.walkforward or a.stats or a.sensitivity)

@@ -66,6 +66,11 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   <div class="kpis" id="kpis"></div>
 
   <section class="card">
+    <h2>Tiến độ các step</h2>
+    <div id="progress"></div>
+  </section>
+
+  <section class="card">
     <h2>1. Giá chuẩn hóa (đầu kỳ = 100)</h2>
     <p class="sub">Buy &amp; Hold của từng cặp, lấy mẫu 4 giờ. Trỏ chuột để xem giá trị.</p>
     <div class="legend" data-legend></div><div id="c-px"></div>
@@ -126,7 +131,13 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>10. Lịch sử chạy (results/run.log)</h2>
+    <h2>10. STEP 4: Sweep tham số (IN-SAMPLE)</h2>
+    <p class="sub">Cửa sổ cuối, quét dl × dh × n × mode sau bộ lọc bước% ≥ 2·fee·2, n ≤ MAX_GRIDS, trades ≥ 20. <b>Chưa dùng để kết luận</b>: không có kiểm định ngoài mẫu.</p>
+    <div id="sweep"></div>
+  </section>
+
+  <section class="card">
+    <h2>11. Lịch sử chạy (results/run.log)</h2>
     <div id="runs"></div>
     <details><summary>Log gốc</summary><pre id="rawlog"></pre></details>
   </section>
@@ -275,6 +286,40 @@ function render() {
   $("rawlog").textContent = D.rawlog;
   legend();
   renderDist();
+  renderSteps();
+}
+
+function renderSteps() {
+  const done = D.progress.filter((p) => p.done).length;
+  $("progress").innerHTML = `<p class="sub">${done}/${D.progress.length} step hoàn thành</p><table>` +
+    D.progress.map((p) => `<tr><td style="width:28px">${p.done ? "✔" : "○"}</td><td style="text-align:left"><b>STEP ${p.n}</b> ${p.text.replace(/\*\*/g, "")}</td></tr>`).join("") + "</table>";
+  const have = SYMS.filter((s) => D.sweep[s]);
+  if (!have.length) { $("sweep").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --sweep</code> rồi <code>python make_report.py</code>.</p>`; return; }
+  const pc = (v) => (v * 100).toFixed(1) + "%", row = (r) => `<tr><td>${pc(r.dl)}</td><td>${pc(r.dh)}</td><td>${r.n}</td><td>${r.mode}</td><td>${(r.step_pct * 100).toFixed(2)}%</td><td>${r.sharpe.toFixed(2)}</td><td>${pc(r.return)}</td><td>${pc(r.mdd)}</td><td>${r.trades}</td></tr>`;
+  const head = "<tr><th>dl</th><th>dh</th><th>n</th><th>mode</th><th>bước%</th><th>Sharpe</th><th>Return</th><th>MDD</th><th>Giao dịch</th></tr>";
+  $("sweep").innerHTML = have.map((s, i) => {
+    const w = D.sweep[s];
+    return `<h2 style="font-size:15px;margin-top:18px"><span class="tag" style="background:${COL[SYMS.indexOf(s)]};color:#fff">${s}</span> ${w.window} ngày · ${w.passed}/${w.combos} tổ hợp qua lọc</h2>
+      <div class="kpis">
+        <div class="kpi"><b>${w.bh.sharpe.toFixed(2)}</b><span>Sharpe B&amp;H cửa sổ (${pct(w.bh.return * 100)})</span></div>
+        <div class="kpi"><b>${w.top[0].sharpe.toFixed(2)}</b><span>Sharpe tốt nhất (in-sample)</span></div>
+        <div class="kpi"><b>${w.median.toFixed(2)}</b><span>Sharpe trung vị mọi tổ hợp</span></div>
+        <div class="kpi"><b>${w.beat.toFixed(0)}%</b><span>Tổ hợp có Sharpe &gt; B&amp;H</span></div>
+        <div class="kpi"><b>${w.topwide}/10</b><span>Top-10 có dh = ${(w.dhmax * 100).toFixed(0)}% (gần giữ coin)</span></div>
+      </div>
+      <div class="row"><div><b style="font-size:13px">Top 10</b><table>${head}${w.top.map(row).join("")}</table></div>
+      <div><b style="font-size:13px">Bottom 5</b><table>${head}${w.bottom.map(row).join("")}</table></div></div>
+      <p class="sub" style="margin-top:12px">Heatmap Sharpe theo dl × n (lát cắt dh = dl, max trên mode)</p><div id="sw-${s}" style="overflow:auto"></div>`;
+  }).join("");
+  have.forEach((s) => {
+    const w = D.sweep[s], mx = Math.max(...w.heat.flat().filter((v) => v != null).map(Math.abs), 1e-9);
+    let h = `<table class="heat"><tr><th>dl / n</th>${w.n.map((n) => `<th>${n}</th>`).join("")}</tr>`;
+    w.dl.forEach((d, i) => {
+      h += `<tr><th>${(d * 100).toFixed(2).replace(/\.?0+$/, "")}%</th>` + w.heat[i].map((v) => v == null ? `<td></td>` :
+        `<td style="background:color-mix(in srgb, var(${v >= 0 ? "--pos" : "--neg"}) ${Math.round(Math.min(1, Math.abs(v) / mx) * 62)}%, var(--surface))">${v.toFixed(1)}</td>`).join("") + "</tr>";
+    });
+    $("sw-" + s).innerHTML = h + "</table>";
+  });
 }
 
 function histCard(s, i) {

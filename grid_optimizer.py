@@ -228,6 +228,34 @@ DAY_MS = 86_400_000
 DEFAULT_GRID = {"dl": 0.10, "dh": 0.10, "n": 20, "mode": "arithmetic"}  # lưới mặc định để so sánh
 
 
+# --- STEP 7: baseline DGT (reset lưới khi giá phá biên, Chen et al.) ---
+def dgt_equity(prices, dl, dh, n, mode="arithmetic", fee=0.0, return_resets=False):
+    """Lưới tương đối (dl, dh, n) đặt tại giá đầu; khi giá phá low/high thì dựng lại quanh giá mới với vốn = equity hiện tại.
+    Phá trên: lưới đã bán hết -> toàn tiền mặt, tái đầu tư vào lưới mới. Phá dưới: lưới đang giữ toàn coin, vốn mới = giá trị coin + tiền.
+    Phí tái cân bằng = fee · phần vốn phải mua/bán để chuyển sang trạng thái ban đầu của lưới mới."""
+    P = np.asarray(prices, float)
+    T, eq, cap, start, resets = len(P), np.empty(len(P)), 1.0, 0, 0
+    while True:
+        p0 = P[start]
+        low, high = p0 * (1 - dl), p0 * (1 + dh)
+        out = (P[start:] < low) | (P[start:] > high)
+        end = start + int(np.argmax(out)) if out.any() else T - 1
+        e = grid_equity(P[start:end + 1], low, high, n, mode, fee)
+        eq[start:end + 1] = cap * e
+        cap *= e[-1]
+        if end == T - 1:
+            break
+        # tái cân bằng sang trạng thái đầu của lưới mới tại giá phá biên
+        nxt = P[end]
+        lines, c = _cross(np.array([nxt]), nxt * (1 - dl), nxt * (1 + dh), n, mode)
+        coin_frac = (n + 1 - c[0]) * nxt / ((n + 1 - c[0]) * nxt + lines[: c[0]].sum())
+        was_cash = P[end] > high  # phá trên -> đang toàn tiền mặt
+        cap *= 1 - fee * (coin_frac if was_cash else 1 - coin_frac)
+        resets += 1
+        start = end
+    return (eq, resets) if return_resets else eq
+
+
 # --- STEP 6: tham số "phẳng" thay vì đỉnh nhọn ---
 UNSTABLE_IQR = {"range_ratio": 0.35, "step_ratio": 1.0}  # cần hiệu chỉnh: IQR/khoảng của dl,dh; IQR/median của step%
 # Kết quả walk-forward (xem README STEP 6): trung bình Sharpe OOS của "phẳng" -1.62 vs "đỉnh nhọn" -1.68 trên 4 cặp,
@@ -299,8 +327,14 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, s
         dfl = _grid_oos(te, **DEFAULT_GRID, fee=fee, bpy=bpy)
         bh = metrics(buy_and_hold(te), bpy)
         fl = smooth_pick(res, space)
+        deq, dres = dgt_equity(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, True)
+        dm = metrics(deq, bpy)
+        deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
+        dm2 = metrics(deq2, bpy)
         foos = _grid_oos(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, bpy)
-        rows.append({"f_dl": fl.dl, "f_dh": fl.dh, "f_n": int(fl.n), "f_mode": fl["mode"], "f_step_pct": fl.step_pct,
+        rows.append({"dgt_sharpe": dm["sharpe"], "dgt_return": dm["return"], "dgt_mdd": dm["mdd"], "dgt_resets": dres,
+                     "dgtdef_sharpe": dm2["sharpe"], "dgtdef_return": dm2["return"], "dgtdef_mdd": dm2["mdd"], "dgtdef_resets": dres2,
+                     "f_dl": fl.dl, "f_dh": fl.dh, "f_n": int(fl.n), "f_mode": fl["mode"], "f_step_pct": fl.step_pct,
                      "f_is_sharpe": fl.sharpe, "f_smooth": fl.smooth, "f_oos_sharpe": foos["sharpe"], "f_oos_return": foos["return"],
                      "f_oos_mdd": foos["mdd"], "f_oos_trades": foos["trades"],
 "fold": k, "train_last_ts": int(ts[i1 - 1]), "test_start": int(ts[i1]), "test_end": int(ts[i2 - 1]),
@@ -319,7 +353,13 @@ def wf_summary(f):
             "oos_return_median": f.oos_return.median(), "bh_return_median": f.bh_return.median(),
             "f_oos_sharpe_median": f.f_oos_sharpe.median(), "f_is_sharpe_median": f.f_is_sharpe.median(),
             "f_pct_profit": float((f.f_oos_return > 0).mean() * 100), "f_pct_beat_bh": float((f.f_oos_return > f.bh_return).mean() * 100),
-            "f_oos_return_median": f.f_oos_return.median()}
+            "f_oos_return_median": f.f_oos_return.median(),
+            "dgt_sharpe_median": f.dgt_sharpe.median(), "dgt_return_median": f.dgt_return.median(),
+            "dgt_pct_profit": float((f.dgt_return > 0).mean() * 100), "dgt_pct_beat_bh": float((f.dgt_return > f.bh_return).mean() * 100),
+            "dgt_resets_median": f.dgt_resets.median(),
+            "dgtdef_sharpe_median": f.dgtdef_sharpe.median(), "dgtdef_return_median": f.dgtdef_return.median(),
+            "def_return_median": f.def_return.median(), "def_pct_profit": float((f.def_return > 0).mean() * 100),
+            "bh_pct_profit": float((f.bh_return > 0).mean() * 100)}
 
 
 def run_wf(symbol, tf, df, train, test, step, fee):
@@ -331,6 +371,9 @@ def run_wf(symbol, tf, df, train, test, step, fee):
     s = wf_summary(f)
     sp = space_for(symbol)
     st_p, st_f = stability(f, sp), stability(f, sp, "f_")
+    log.info("WF %s DGT: OOS Sharpe median=%.2f (flat grid %.2f, B&H %.2f, DGT default %.2f), resets median=%.0f, %%fold lãi=%.0f%%",
+             symbol, s["dgt_sharpe_median"], s["f_oos_sharpe_median"], s["bh_sharpe_median"], s["dgtdef_sharpe_median"],
+             s["dgt_resets_median"], s["dgt_pct_profit"])
     log.info("WF %s flat: OOS Sharpe median=%.2f (peak %.2f); %%fold lãi=%.0f%%; peak %s, flat %s", symbol, s["f_oos_sharpe_median"],
              s["oos_sharpe_median"], s["f_pct_profit"], "UNSTABLE" if st_p["unstable"] else "stable", "UNSTABLE" if st_f["unstable"] else "stable")
     log.info("WF %s train=%dd test=%dd step=%dd: %d folds, %.1fs. OOS Sharpe median=%.2f (B&H %.2f, default %.2f, in-sample %.2f); "

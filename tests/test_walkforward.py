@@ -36,3 +36,9 @@ def test_summary_keys():
     f = g.walk_forward(_df(1), "15m", "BTCUSDT", space=SPACE)
     s = g.wf_summary(f)
     assert s["folds"] == len(f) and 0 <= s["pct_profit"] <= 100
+
+
+def test_max_grids_caps_n_in_walk_forward():
+    sp = {"dl": [0.02, 0.05, 0.1], "dh": [0.02, 0.05, 0.1], "n": [4, 10, 20, 40], "mode": ["arithmetic", "geometric"]}
+    f = g.walk_forward(_df(), "15m", "BTCUSDT", space=sp, with_dgt=False, max_grids=10)
+    assert (f.n <= 10).all() and (f.f_n <= 10).all()

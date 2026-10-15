@@ -198,11 +198,11 @@ def heatmap(df, path, title):
     plt.close(fig)
 
 
-def run_sweep(symbol, tf, df, window_days, fee):
+def run_sweep(symbol, tf, df, window_days, fee, max_grids=MAX_GRIDS):
     t0 = time.time()
     n = window_days * 86_400_000 // BAR_MS[tf]
     P = df.close.values[-n:]
-    res = sweep(P, space_for(symbol), fee, BARS_PER_YEAR[tf])
+    res = sweep(P, space_for(symbol), fee, BARS_PER_YEAR[tf], max_grids=max_grids)
     bh = metrics(buy_and_hold(P), BARS_PER_YEAR[tf])
     total = len(space_for(symbol)["dl"]) * len(space_for(symbol)["dh"]) * len(N_LIST) * 2
     log.info("SWEEP %s %dd: %d/%d tổ hợp qua bộ lọc, %.1fs. IN-SAMPLE, chưa dùng để kết luận", symbol, window_days, len(res), total, time.time() - t0)
@@ -306,7 +306,7 @@ def _grid_oos(P, dl, dh, n, mode, fee, bpy):
     return metrics(grid_equity(P, low, high, n, mode, fee), bpy, trades, turn)
 
 
-def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, step_days=30, space=None, safety=2.0, with_dgt=True):
+def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, step_days=30, space=None, safety=2.0, with_dgt=True, max_grids=MAX_GRIDS):
     """Mỗi fold: sweep trên train [a,b), chọn tham số tốt nhất, áp tại giá đầu test [b,c). Chỉ dùng dữ liệu < b để chọn."""
     ts, px = df.ts.values, df.close.values
     bpy, space, rows, k = BARS_PER_YEAR[tf], space or space_for(symbol), [], 0
@@ -317,7 +317,7 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, s
             break
         i0, i1, i2 = np.searchsorted(ts, [a, b, c])
         tr, te = px[i0:i1], px[i1:i2]
-        res = sweep(tr, space, fee, bpy, safety)
+        res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids)
         if res.empty:
             log.info("WF %s fold %d: không có tổ hợp qua lọc, bỏ qua", symbol, k)
             k += 1
@@ -366,9 +366,9 @@ def wf_summary(f):
             "bh_pct_profit": float((f.bh_return > 0).mean() * 100)}
 
 
-def run_wf(symbol, tf, df, train, test, step, fee):
+def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
     t0 = time.time()
-    f = walk_forward(df, tf, symbol, fee, train, test, step)
+    f = walk_forward(df, tf, symbol, fee, train, test, step, max_grids=max_grids)
     out = Path(__file__).parent / "results" / f"{symbol}_folds.csv"
     out.parent.mkdir(exist_ok=True)
     f.to_csv(out, index=False)
@@ -434,16 +434,16 @@ def deflated_sharpe(r, n_trials, trial_var):
     return nd.cdf(sr * np.sqrt(T - 1) / den), nd.cdf((sr - sr0) * np.sqrt(T - 1) / den), float(sr0)
 
 
-def run_stats(symbol, tf, df, fee, train=90, test=30, step=30, window=90):
+def run_stats(symbol, tf, df, fee, train=90, test=30, step=30, window=90, max_grids=MAX_GRIDS):
     bpy = BARS_PER_YEAR[tf]
-    f = walk_forward(df, tf, symbol, fee, train, test, step, with_dgt=False)
+    f = walk_forward(df, tf, symbol, fee, train, test, step, with_dgt=False, max_grids=max_grids)
     f["fee"] = fee
     gr, bh = oos_returns(df, f)
     ci_g, ci_b, ci_d = block_bootstrap_sharpe(gr, bpy), block_bootstrap_sharpe(bh, bpy), block_bootstrap_sharpe(gr - bh, bpy)
     sp = space_for(symbol)
     ntr = len(sp["dl"]) * len(sp["dh"]) * len(sp["n"]) * len(sp["mode"])
     nbar = window * 86_400_000 // BAR_MS[tf]
-    sweep_sh = sweep(df.close.values[-nbar:], sp, fee, bpy).sharpe.values / np.sqrt(bpy)  # Sharpe/bar của các thử nghiệm
+    sweep_sh = sweep(df.close.values[-nbar:], sp, fee, bpy, max_grids=max_grids).sharpe.values / np.sqrt(bpy)  # Sharpe/bar của các thử nghiệm
     psr, dsr, sr0 = deflated_sharpe(gr, ntr, float(np.var(sweep_sh, ddof=1)))
     zero_in = ci_g[0] <= 0 <= ci_g[2]
     verdict = ("chưa có bằng chứng edge (CI 95% của Sharpe OOS chứa 0)" if zero_in else
@@ -458,17 +458,17 @@ def run_stats(symbol, tf, df, fee, train=90, test=30, step=30, window=90):
     return out
 
 
-def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "1h")):
+def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "1h"), max_grids=MAX_GRIDS):
     """Sharpe OOS trung vị (phẳng, đỉnh nhọn, B&H) theo phí (x0.5/1/2 ở 15m) và theo timeframe (phí 1x)."""
     rows, base = [], None
     df15 = load_ohlcv(symbol, "15m", days)
     for m in fees:
-        s = wf_summary(walk_forward(df15, "15m", symbol, fee * m, with_dgt=False))
+        s = wf_summary(walk_forward(df15, "15m", symbol, fee * m, with_dgt=False, max_grids=max_grids))
         base = s if m == 1.0 else base
         rows.append({"kind": "fee", "label": f"{m:g}x ({fee * m:.4f})", **{k: s[k] for k in ("f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "f_pct_profit", "folds")}})
         log.info("SENS %s fee x%g: flat=%.2f peak=%.2f B&H=%.2f", symbol, m, s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
     for tf in tfs:
-        s = base if tf == "15m" and base else wf_summary(walk_forward(load_ohlcv(symbol, tf, days), tf, symbol, fee, with_dgt=False))
+        s = base if tf == "15m" and base else wf_summary(walk_forward(load_ohlcv(symbol, tf, days), tf, symbol, fee, with_dgt=False, max_grids=max_grids))
         rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "f_pct_profit", "folds")}})
         log.info("SENS %s tf %s: flat=%.2f peak=%.2f B&H=%.2f", symbol, tf, s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
     (Path(__file__).parent / "results" / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")
@@ -476,10 +476,10 @@ def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "
 
 
 # --- STEP 9: pipeline đầy đủ ---
-def run_final(symbol, tf, df, fee, train, test, step, window):
+def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRIDS):
     """Walk-forward + CI + tham số khuyến nghị cho một cặp. Trả (dòng summary, chuỗi equity OOS)."""
     bpy, sp = BARS_PER_YEAR[tf], space_for(symbol)
-    f = walk_forward(df, tf, symbol, fee, train, test, step)
+    f = walk_forward(df, tf, symbol, fee, train, test, step, max_grids=max_grids)
     out = Path(__file__).parent / "results" / f"{symbol}_folds.csv"
     out.parent.mkdir(exist_ok=True)
     f.to_csv(out, index=False)
@@ -491,7 +491,7 @@ def run_final(symbol, tf, df, fee, train, test, step, window):
     lo, pt, hi = block_bootstrap_sharpe(gr, bpy)
     # tham số khuyến nghị: chọn trên train_days cuối (dữ liệu mới nhất), tương đối theo giá hiện tại
     nbar = train * 86_400_000 // BAR_MS[tf]
-    res = sweep(df.close.values[-nbar:], sp, fee, bpy)
+    res = sweep(df.close.values[-nbar:], sp, fee, bpy, max_grids=max_grids)
     rec = smooth_pick(res, sp) if DEFAULT_PICK == "flat" else res.iloc[0]
     st = stability(f, sp, pre)
     last = float(df.close.iloc[-1])
@@ -547,6 +547,7 @@ def main():
     ap.add_argument("--sweep", action="store_true", help="STEP 4: quét tham số trên cửa sổ cuối (in-sample)")
     ap.add_argument("--window", type=int, default=90, help="số ngày của cửa sổ sweep")
     ap.add_argument("--fee", type=float, default=DEFAULT_FEE)
+    ap.add_argument("--max-grids", type=int, default=MAX_GRIDS, help="trần số lưới n (cần xác minh trong app Bitget)")
     ap.add_argument("--walkforward", action="store_true", help="STEP 5: walk-forward OOS")
     ap.add_argument("--stats", action="store_true", help="STEP 8: CI bootstrap + Deflated Sharpe")
     ap.add_argument("--sensitivity", action="store_true", help="STEP 8: độ nhạy theo phí và timeframe (chậm)")
@@ -566,15 +567,15 @@ def main():
         m = metrics(buy_and_hold(df.close.values), BARS_PER_YEAR[a.tf])
         log.info("%s B&H: sharpe=%.2f return=%+.1f%% mdd=%.1f%%", s, m["sharpe"], 100 * m["return"], 100 * m["mdd"])
         if a.sweep:
-            run_sweep(s, a.tf, df, a.window, a.fee)
+            run_sweep(s, a.tf, df, a.window, a.fee, a.max_grids)
         if a.walkforward:
-            run_wf(s, a.tf, df, a.train, a.test, a.step, a.fee)
+            run_wf(s, a.tf, df, a.train, a.test, a.step, a.fee, a.max_grids)
         if a.stats:
-            run_stats(s, a.tf, df, a.fee, a.train, a.test, a.step, a.window)
+            run_stats(s, a.tf, df, a.fee, a.train, a.test, a.step, a.window, a.max_grids)
         if a.sensitivity:
-            run_sensitivity(s, a.days, a.fee)
+            run_sensitivity(s, a.days, a.fee, max_grids=a.max_grids)
         if final:
-            row, series[s] = run_final(s, a.tf, df, a.fee, a.train, a.test, a.step, a.window)
+            row, series[s] = run_final(s, a.tf, df, a.fee, a.train, a.test, a.step, a.window, a.max_grids)
             rows.append(row)
     if final:
         write_final(rows, series)

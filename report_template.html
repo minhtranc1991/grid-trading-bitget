@@ -137,7 +137,14 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>11. Lịch sử chạy (results/run.log)</h2>
+    <h2>11. STEP 5: Walk-forward OUT-OF-SAMPLE</h2>
+    <p class="sub">Mỗi fold: sweep trên 90 ngày train, chọn tham số đỉnh in-sample, áp tại giá đầu 30 ngày test, trượt 30 ngày. Tham số chọn chỉ dùng dữ liệu trước ngày bắt đầu test.</p>
+    <div class="legend"><span><i style="background:var(--s1)"></i>Grid chọn từ train (OOS)</span><span><i style="background:var(--muted)"></i>Buy &amp; Hold</span><span><i style="background:var(--s2)"></i>Grid mặc định (±10%, n=20)</span></div>
+    <div id="wf"></div>
+  </section>
+
+  <section class="card">
+    <h2>12. Lịch sử chạy (results/run.log)</h2>
     <div id="runs"></div>
     <details><summary>Log gốc</summary><pre id="rawlog"></pre></details>
   </section>
@@ -289,10 +296,52 @@ function render() {
   renderSteps();
 }
 
+function wfChart(f) {
+  const W = 680, H = 200, m = { l: 36, r: 8, t: 8, b: 22 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const keys = [["oos_sharpe", "var(--s1)"], ["bh_sharpe", "var(--muted)"], ["def_sharpe", "var(--s2)"]];
+  const all = f.flatMap((r) => keys.map(([k]) => r[k]));
+  const lo = Math.min(0, ...all), hi = Math.max(0, ...all), Y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * ih;
+  const gw = iw / f.length, bw = Math.max(2, (gw - 6) / 3);
+  let g = "";
+  for (const v of niceTicks(lo, hi, 5)) g += `<line class="gridline" x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${m.l - 5}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
+  g += `<line class="axisline" x1="${m.l}" x2="${W - m.r}" y1="${Y(0)}" y2="${Y(0)}"/>`;
+  f.forEach((r, i) => {
+    keys.forEach(([k, c], j) => {
+      const x = m.l + i * gw + 3 + j * bw, y0 = Y(0), y1 = Y(r[k]);
+      g += `<rect x="${x}" y="${Math.min(y0, y1)}" width="${bw - 1}" height="${Math.max(1, Math.abs(y1 - y0))}" rx="2" style="fill:${c}"><title>Fold ${r.fold + 1} · ${k.split("_")[0]}: Sharpe ${r[k].toFixed(2)}</title></rect>`;
+    });
+    g += `<text x="${m.l + i * gw + gw / 2}" y="${H - 6}" text-anchor="middle">${r.fold + 1}</text>`;
+  });
+  return svgEl(W, H, g);
+}
+
+function renderWF() {
+  const have = SYMS.filter((s) => D.wf[s]);
+  if (!have.length) { $("wf").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --walkforward</code> rồi <code>python make_report.py</code>.</p>`; return; }
+  const pc = (v) => (v * 100).toFixed(1) + "%";
+  $("wf").innerHTML = have.map((s) => {
+    const w = D.wf[s], S = w.sum, i = SYMS.indexOf(s);
+    const verdict = S.oos_sharpe_median > S.bh_sharpe_median ? "Grid chọn từ train tốt hơn B&H (trung vị Sharpe OOS)" : "Grid chọn từ train KHÔNG tốt hơn B&H (trung vị Sharpe OOS)";
+    return `<h2 style="font-size:15px;margin-top:18px"><span class="tag" style="background:${COL[i]};color:#fff">${s}</span> ${S.folds} fold · ${verdict}</h2>
+      <div class="kpis">
+        <div class="kpi"><b>${S.oos_sharpe_median.toFixed(2)}</b><span>Sharpe OOS trung vị</span></div>
+        <div class="kpi"><b>${S.bh_sharpe_median.toFixed(2)}</b><span>Sharpe B&amp;H trung vị</span></div>
+        <div class="kpi"><b>${S.def_sharpe_median.toFixed(2)}</b><span>Sharpe lưới mặc định</span></div>
+        <div class="kpi"><b>${S.is_sharpe_median.toFixed(2)}</b><span>Sharpe in-sample (chọn trên train)</span></div>
+        <div class="kpi"><b>${S.pct_profit.toFixed(0)}%</b><span>Fold có lãi</span></div>
+        <div class="kpi"><b>${S.pct_beat_bh.toFixed(0)}%</b><span>Fold hơn B&amp;H (return)</span></div>
+      </div>
+      ${wfChart(w.folds)}
+      <details><summary>Bảng fold</summary><table><tr><th>Fold</th><th>Test từ</th><th>dl</th><th>dh</th><th>n</th><th>mode</th><th>IS Sharpe</th><th>OOS Sharpe</th><th>OOS return</th><th>B&amp;H return</th><th>Default return</th><th>Giao dịch OOS</th></tr>` +
+      w.folds.map((r) => `<tr><td>${r.fold + 1}</td><td>${fmtDate(r.test_start)}</td><td>${pc(r.dl)}</td><td>${pc(r.dh)}</td><td>${r.n}</td><td>${r.mode}</td><td>${r.is_sharpe.toFixed(2)}</td><td>${r.oos_sharpe.toFixed(2)}</td><td>${pc(r.oos_return)}</td><td>${pc(r.bh_return)}</td><td>${pc(r.def_return)}</td><td>${r.oos_trades}</td></tr>`).join("") + "</table></details>";
+  }).join("");
+}
+
 function renderSteps() {
   const done = D.progress.filter((p) => p.done).length;
   $("progress").innerHTML = `<p class="sub">${done}/${D.progress.length} step hoàn thành</p><table>` +
     D.progress.map((p) => `<tr><td style="width:28px">${p.done ? "✔" : "○"}</td><td style="text-align:left"><b>STEP ${p.n}</b> ${p.text.replace(/\*\*/g, "")}</td></tr>`).join("") + "</table>";
+  renderWF();
   const have = SYMS.filter((s) => D.sweep[s]);
   if (!have.length) { $("sweep").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --sweep</code> rồi <code>python make_report.py</code>.</p>`; return; }
   const pc = (v) => (v * 100).toFixed(1) + "%", row = (r) => `<tr><td>${pc(r.dl)}</td><td>${pc(r.dh)}</td><td>${r.n}</td><td>${r.mode}</td><td>${(r.step_pct * 100).toFixed(2)}%</td><td>${r.sharpe.toFixed(2)}</td><td>${pc(r.return)}</td><td>${pc(r.mdd)}</td><td>${r.trades}</td></tr>`;

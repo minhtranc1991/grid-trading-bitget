@@ -78,3 +78,10 @@ def test_chosen_configs_respect_min_step():
     f = g.walk_forward(_df(), "15m", "BTCUSDT", fee=fee, space=SPACE, with_dgt=False, **WIN)
     for c in ("step_pct", "f_step_pct", "s_step_pct"):
         assert (f[c] >= 2 * fee * 2 - 1e-12).all()
+
+
+def test_parallel_equals_serial():
+    df = _df(4, days=100)
+    a = g.walk_forward(df, "15m", "BTCUSDT", space=SPACE, jobs=1, **WIN)
+    b = g.walk_forward(df, "15m", "BTCUSDT", space=SPACE, jobs=2, **WIN)
+    pd.testing.assert_frame_equal(a, b)

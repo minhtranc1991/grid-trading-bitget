@@ -1,7 +1,10 @@
 import argparse
+import atexit
 import json
 import logging
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor
 import urllib.request
 from pathlib import Path
 
@@ -296,25 +299,41 @@ MIN_NEIGHBORS = 5  # ô được chọn phải có >= 5 ô hợp lệ trong lân
 
 
 def smooth_pick(res, space):
-    """Chọn dòng có Sharpe trung bình lân cận 3x3 trên (dl,dh) cao nhất (cùng n, mode); chỉ ô có >= MIN_NEIGHBORS ô hợp lệ."""
-    dls, dhs = list(space["dl"]), list(space["dh"])
-    best, best_score, fallback = None, -np.inf, (None, -1)
-    for (n, mode), g in res.groupby(["n", "mode"]):
-        A = np.full((len(dls), len(dhs)), np.nan)
-        for r in g.itertuples():
-            A[dls.index(r.dl), dhs.index(r.dh)] = r.sharpe
+    """Chọn dòng có Sharpe trung bình lân cận 3x3 trên (dl,dh) cao nhất (cùng n, mode); chỉ ô có >= MIN_NEIGHBORS ô hợp lệ.
+    Chỉ dùng numpy trong vòng lặp; pandas chỉ để lấy dòng thắng cuộc."""
+    dli = {v: i for i, v in enumerate(space["dl"])}
+    dhi = {v: i for i, v in enumerate(space["dh"])}
+    shape = (len(dli), len(dhi))
+    r = res.reset_index(drop=True)
+    il, ih = r.dl.map(dli).values, r.dh.map(dhi).values
+    sharpe = r.sharpe.values
+    best_i, best_score, fb_i, fb_cnt, fb_avg = -1, -np.inf, -1, -1, -np.inf
+    for idx in r.groupby(["n", "mode"]).indices.values():
+        A = np.full(shape, np.nan)
+        A[il[idx], ih[idx]] = sharpe[idx]
+        M = np.full(shape, -1)
+        M[il[idx], ih[idx]] = idx
         pad = np.pad(A, 1, constant_values=np.nan)
-        win = np.stack([pad[i:i + A.shape[0], j:j + A.shape[1]] for i in range(3) for j in range(3)])
-        cnt = (~np.isnan(win)).sum(0)
-        avg = np.where(cnt > 0, np.nansum(win, 0) / np.maximum(cnt, 1), np.nan)
-        for i, j in zip(*np.where(~np.isnan(A))):
-            row = g[(g.dl == dls[i]) & (g.dh == dhs[j])].iloc[0].copy()
-            row["smooth"] = avg[i, j]
-            if cnt[i, j] >= MIN_NEIGHBORS and avg[i, j] > best_score:
-                best, best_score = row, avg[i, j]
-            if cnt[i, j] > fallback[1] or (cnt[i, j] == fallback[1] and fallback[0] is not None and avg[i, j] > fallback[0]["smooth"]):
-                fallback = (row, cnt[i, j])
-    return best if best is not None else fallback[0]
+        win = np.stack([pad[i:i + shape[0], j:j + shape[1]] for i in range(3) for j in range(3)])
+        valid = ~np.isnan(win)
+        cnt = valid.sum(0)
+        avg = np.where(cnt > 0, np.where(valid, win, 0).sum(0) / np.maximum(cnt, 1), np.nan)
+        has = ~np.isnan(A)
+        ok = has & (cnt >= MIN_NEIGHBORS)
+        if ok.any():
+            sc = np.where(ok, avg, -np.inf)
+            p = np.unravel_index(np.argmax(sc), shape)
+            if sc[p] > best_score:
+                best_score, best_i = sc[p], M[p]
+        # dự phòng nếu không ô nào đủ hàng xóm: ô có nhiều hàng xóm nhất, rồi trung bình cao nhất
+        key = np.where(has, cnt * 1e6 + np.nan_to_num(avg, nan=-1e5), -np.inf)
+        p = np.unravel_index(np.argmax(key), shape)
+        if has[p] and (cnt[p] > fb_cnt or (cnt[p] == fb_cnt and avg[p] > fb_avg)):
+            fb_i, fb_cnt, fb_avg = M[p], cnt[p], avg[p]
+    i = best_i if best_i >= 0 else fb_i
+    row = r.iloc[i].copy()
+    row["smooth"] = best_score if best_i >= 0 else fb_avg
+    return row
 
 
 def stability(f, space, prefix=""):
@@ -342,11 +361,11 @@ TOP_K = 20  # số ứng viên lấy từ IS
 PICK_PREFIX = {"peak": "", "flat": "f_", "stable": "s_"}
 
 
-def stable_pick(res, space, sel_px, fee, bpy, top_k=TOP_K):
+def stable_pick(res, space, sel_px, fee, bpy, top_k=TOP_K, flat=None):
     """Tham số ổn định: ứng viên = top_k theo Sharpe IS + tham số phẳng của IS; chấm lại trên tuần OOS-select;
     chọn ứng viên có min(Sharpe IS, Sharpe OOS) cao nhất, tức là tốt ở cả hai nơi chứ không chỉ ở IS."""
     cands = [(r.dl, r.dh, int(r.n), r["mode"], r.sharpe, r.step_pct) for _, r in res.head(top_k).iterrows()]
-    fl = smooth_pick(res, space)
+    fl = smooth_pick(res, space) if flat is None else flat
     cands.append((fl.dl, fl.dh, int(fl.n), fl["mode"], fl.sharpe, fl.step_pct))
     best = None
     for dl, dh, n, mode, is_sh, st in cands:
@@ -357,15 +376,74 @@ def stable_pick(res, space, sel_px, fee, bpy, top_k=TOP_K):
     return best
 
 
+_POOL = None
+
+
+def _get_pool(jobs):
+    """Pool dùng chung giữa các lần gọi (khởi tạo tiến trình con trên Windows tốn vài giây mỗi lần)."""
+    global _POOL
+    if _POOL is None or _POOL._max_workers != jobs:
+        if _POOL is not None:
+            _POOL.shutdown()
+        _POOL = ProcessPoolExecutor(max_workers=jobs)
+        atexit.register(_POOL.shutdown)
+    return _POOL
+
+
+JOBS = 1  # số tiến trình chạy song song các fold (CLI --jobs đặt mặc định 8); 1 = chạy tuần tự, không tạo pool
+
+
+def _wf_fold(t):
+    """Một fold độc lập (chạy được trong tiến trình con): IS -> OOS chọn tham số ổn định -> forward."""
+    k, tr, sel, te, ts_bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k = t
+    bpy = BARS_PER_YEAR[tf]
+    res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids)
+    if res.empty:
+        return k, None
+    best = res.iloc[0]  # đỉnh in-sample
+    fl = smooth_pick(res, space)
+    st = stable_pick(res, space, sel, fee, bpy, top_k, flat=fl)
+    oos = _grid_oos(te, best.dl, best.dh, int(best.n), best["mode"], fee, bpy)
+    foos = _grid_oos(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, bpy)
+    soos = _grid_oos(te, st["dl"], st["dh"], st["n"], st["mode"], fee, bpy)
+    dfl = _grid_oos(te, **DEFAULT_GRID, fee=fee, bpy=bpy)
+    bh = metrics(buy_and_hold(te), bpy)
+    if with_dgt:
+        deq, dres = dgt_equity(te, st["dl"], st["dh"], st["n"], st["mode"], fee, True)
+        dm = metrics(deq, bpy)
+        deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
+        dm2 = metrics(deq2, bpy)
+    else:
+        dm = dm2 = {"sharpe": np.nan, "return": np.nan, "mdd": np.nan}
+        dres = dres2 = np.nan
+    is_last, sel_last, t_start, t_end = ts_bounds
+    return k, {
+        "fold": k, "is_last_ts": is_last, "train_last_ts": sel_last, "test_start": t_start, "test_end": t_end,
+        "dgt_sharpe": dm["sharpe"], "dgt_return": dm["return"], "dgt_mdd": dm["mdd"], "dgt_resets": dres,
+        "dgtdef_sharpe": dm2["sharpe"], "dgtdef_return": dm2["return"], "dgtdef_mdd": dm2["mdd"], "dgtdef_resets": dres2,
+        "s_dl": st["dl"], "s_dh": st["dh"], "s_n": st["n"], "s_mode": st["mode"], "s_step_pct": st["step_pct"],
+        "s_is_sharpe": st["is_sharpe"], "s_sel_sharpe": st["sel_sharpe"], "s_oos_sharpe": soos["sharpe"],
+        "s_oos_return": soos["return"], "s_oos_mdd": soos["mdd"], "s_oos_trades": soos["trades"],
+        "f_dl": fl.dl, "f_dh": fl.dh, "f_n": int(fl.n), "f_mode": fl["mode"], "f_step_pct": fl.step_pct,
+        "f_is_sharpe": fl.sharpe, "f_smooth": fl.smooth, "f_oos_sharpe": foos["sharpe"], "f_oos_return": foos["return"],
+        "f_oos_mdd": foos["mdd"], "f_oos_trades": foos["trades"],
+        "dl": best.dl, "dh": best.dh, "n": int(best.n), "mode": best["mode"], "step_pct": best.step_pct,
+        "is_sharpe": best.sharpe, "oos_sharpe": oos["sharpe"], "oos_return": oos["return"], "oos_mdd": oos["mdd"],
+        "oos_trades": oos["trades"], "bh_sharpe": bh["sharpe"], "bh_return": bh["return"], "bh_mdd": bh["mdd"],
+        "def_sharpe": dfl["sharpe"], "def_return": dfl["return"], "def_mdd": dfl["mdd"], "def_trades": dfl["trades"]}
+
+
 def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, step_days=7, space=None, safety=2.0,
-                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K):
+                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K, jobs=None):
     """Mỗi fold (trượt step_days):
       IS     [a, b)  : sweep, tìm tham số tối ưu (đỉnh nhọn và phẳng)
       OOS    [b, s)  : chấm các ứng viên của IS, chọn tham số ổn định (tốt ở cả IS và OOS)
-      FORWARD[s, c)  : áp tham số tại giá đầu tuần, đo hiệu suất. Chưa từng dùng để chọn nên là phép thử sạch."""
+      FORWARD[s, c)  : áp tham số tại giá đầu tuần, đo hiệu suất. Chưa từng dùng để chọn nên là phép thử sạch.
+    Các fold độc lập nên chạy song song bằng jobs tiến trình (kết quả y hệt chạy tuần tự)."""
     select_days = SELECT_DAYS if select_days is None else select_days
+    jobs = JOBS if jobs is None else jobs
     ts, px = df.ts.values, df.close.values
-    bpy, space, rows, k = BARS_PER_YEAR[tf], space or space_for(symbol), [], 0
+    space, tasks, k = space or space_for(symbol), [], 0
     while True:
         a = ts[0] + k * step_days * DAY_MS
         b = a + train_days * DAY_MS
@@ -374,43 +452,19 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, st
         if c > ts[-1] + BAR_MS[tf]:
             break
         i0, i1, i2, i3 = np.searchsorted(ts, [a, b, s_end, c])
-        tr, sel, te = px[i0:i1], px[i1:i2], px[i2:i3]
-        res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids)
-        if res.empty:
-            log.info("WF %s fold %d: không có tổ hợp qua lọc, bỏ qua", symbol, k)
-            k += 1
-            continue
-        best = res.iloc[0]  # đỉnh in-sample
-        fl = smooth_pick(res, space)
-        st = stable_pick(res, space, sel, fee, bpy, top_k)
-        oos = _grid_oos(te, best.dl, best.dh, int(best.n), best["mode"], fee, bpy)
-        foos = _grid_oos(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, bpy)
-        soos = _grid_oos(te, st["dl"], st["dh"], st["n"], st["mode"], fee, bpy)
-        dfl = _grid_oos(te, **DEFAULT_GRID, fee=fee, bpy=bpy)
-        bh = metrics(buy_and_hold(te), bpy)
-        if with_dgt:
-            deq, dres = dgt_equity(te, st["dl"], st["dh"], st["n"], st["mode"], fee, True)
-            dm = metrics(deq, bpy)
-            deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
-            dm2 = metrics(deq2, bpy)
-        else:
-            dm = dm2 = {"sharpe": np.nan, "return": np.nan, "mdd": np.nan}
-            dres = dres2 = np.nan
-        rows.append({
-            "fold": k, "is_last_ts": int(ts[i1 - 1]), "train_last_ts": int(ts[i2 - 1]), "test_start": int(ts[i2]), "test_end": int(ts[i3 - 1]),
-            "dgt_sharpe": dm["sharpe"], "dgt_return": dm["return"], "dgt_mdd": dm["mdd"], "dgt_resets": dres,
-            "dgtdef_sharpe": dm2["sharpe"], "dgtdef_return": dm2["return"], "dgtdef_mdd": dm2["mdd"], "dgtdef_resets": dres2,
-            "s_dl": st["dl"], "s_dh": st["dh"], "s_n": st["n"], "s_mode": st["mode"], "s_step_pct": st["step_pct"],
-            "s_is_sharpe": st["is_sharpe"], "s_sel_sharpe": st["sel_sharpe"], "s_oos_sharpe": soos["sharpe"],
-            "s_oos_return": soos["return"], "s_oos_mdd": soos["mdd"], "s_oos_trades": soos["trades"],
-            "f_dl": fl.dl, "f_dh": fl.dh, "f_n": int(fl.n), "f_mode": fl["mode"], "f_step_pct": fl.step_pct,
-            "f_is_sharpe": fl.sharpe, "f_smooth": fl.smooth, "f_oos_sharpe": foos["sharpe"], "f_oos_return": foos["return"],
-            "f_oos_mdd": foos["mdd"], "f_oos_trades": foos["trades"],
-            "dl": best.dl, "dh": best.dh, "n": int(best.n), "mode": best["mode"], "step_pct": best.step_pct,
-            "is_sharpe": best.sharpe, "oos_sharpe": oos["sharpe"], "oos_return": oos["return"], "oos_mdd": oos["mdd"],
-            "oos_trades": oos["trades"], "bh_sharpe": bh["sharpe"], "bh_return": bh["return"], "bh_mdd": bh["mdd"],
-            "def_sharpe": dfl["sharpe"], "def_return": dfl["return"], "def_mdd": dfl["mdd"], "def_trades": dfl["trades"]})
+        bounds = (int(ts[i1 - 1]), int(ts[i2 - 1]), int(ts[i2]), int(ts[i3 - 1]))
+        tasks.append((k, px[i0:i1], px[i1:i2], px[i2:i3], bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k))
         k += 1
+    if jobs > 1 and len(tasks) > 1:
+        out = list(_get_pool(jobs).map(_wf_fold, tasks))
+    else:
+        out = [_wf_fold(t) for t in tasks]
+    rows = []
+    for k, row in out:
+        if row is None:
+            log.info("WF %s fold %d: không có tổ hợp qua lọc, bỏ qua", symbol, k)
+        else:
+            rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -629,8 +683,10 @@ def main():
     ap.add_argument("--select", type=int, default=SELECT_DAYS, help="độ dài OOS (ngày): tìm tham số ổn định")
     ap.add_argument("--test", type=int, default=7, help="độ dài tuần forward (ngày): đo hiệu suất")
     ap.add_argument("--step", type=int, default=7, help="bước trượt (ngày)")
+    ap.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1), help="số tiến trình song song cho các fold (tối đa 8)")
     a = ap.parse_args()
     globals()["SELECT_DAYS"] = a.select
+    globals()["JOBS"] = max(1, min(a.jobs, 8))
     LOG_PATH.parent.mkdir(exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
                         handlers=[logging.StreamHandler(), logging.FileHandler(LOG_PATH, encoding="utf-8")])

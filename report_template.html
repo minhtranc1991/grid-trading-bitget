@@ -137,7 +137,7 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>11. STEP 5–6: Walk-forward OUT-OF-SAMPLE, đỉnh nhọn vs phẳng</h2>
+    <h2>11. STEP 5–7: Walk-forward OUT-OF-SAMPLE, đỉnh nhọn vs phẳng vs DGT</h2>
     <p class="sub">Mỗi fold: sweep trên 90 ngày train, chọn tham số đỉnh in-sample, áp tại giá đầu 30 ngày test, trượt 30 ngày. Tham số chọn chỉ dùng dữ liệu trước ngày bắt đầu test.</p>
     <div class="legend"><span><i style="background:var(--s1)"></i>Grid chọn từ train (OOS)</span><span><i style="background:var(--muted)"></i>Buy &amp; Hold</span><span><i style="background:var(--s2)"></i>Grid mặc định (±10%, n=20)</span><span><i style="background:var(--s3)"></i>Grid "phẳng" (STEP 6)</span></div>
     <div id="wf"></div>
@@ -336,6 +336,14 @@ function renderWF() {
       <table style="margin-top:8px"><tr><th>Ổn định qua fold</th><th>dl median (IQR)</th><th>dh median (IQR)</th><th>bước% median (IQR)</th><th>Cờ</th></tr>` +
       ["peak", "flat"].map((k) => { const x = w.stab[k]; return `<tr><td>${k === "peak" ? "Đỉnh nhọn" : "Phẳng"}</td><td>${pc(x.dl_median)} (${pc(x.dl_iqr)})</td><td>${pc(x.dh_median)} (${pc(x.dh_iqr)})</td><td>${pc(x.step_pct_median)} (${pc(x.step_pct_iqr)})</td><td>${x.unstable ? "UNSTABLE" : "ổn định"}</td></tr>`; }).join("") +
       `</table><p class="note">${w.stab.peak.dh_median >= w.dhmax - 1e-9 ? "dh median nằm ở biên trên của không gian tìm kiếm: bộ tối ưu luôn đẩy dh lên mức tối đa (gần như giữ coin)." : ""}</p>
+      <table style="margin-top:8px"><tr><th>STEP 7: OOS, trung vị 15 fold</th><th>Sharpe</th><th>Return</th><th>Fold lãi</th></tr>` +
+      [["Buy &amp; Hold", S.bh_sharpe_median, S.bh_return_median, S.bh_pct_profit],
+       ["Grid cố định mặc định (±10%, n=20)", S.def_sharpe_median, S.def_return_median, S.def_pct_profit],
+       ["Grid tối ưu: đỉnh nhọn", S.oos_sharpe_median, S.oos_return_median, S.pct_profit],
+       ["Grid tối ưu: phẳng", S.f_oos_sharpe_median, S.f_oos_return_median, S.f_pct_profit],
+       ["DGT (tham số phẳng)", S.dgt_sharpe_median, S.dgt_return_median, S.dgt_pct_profit],
+       ["DGT (lưới mặc định)", S.dgtdef_sharpe_median, S.dgtdef_return_median, null]].map((r) => `<tr><td>${r[0]}</td><td>${r[1].toFixed(2)}</td><td>${pct(r[2] * 100)}</td><td>${r[3] == null ? "–" : r[3].toFixed(0) + "%"}</td></tr>`).join("") +
+      `</table><p class="note">DGT phá biên ${S.dgt_resets_median.toFixed(0)} lần/fold (trung vị) và trả phí tái cân bằng mỗi lần reset.</p>
       <details><summary>Bảng fold</summary><table><tr><th>Fold</th><th>Test từ</th><th>dl</th><th>dh</th><th>n</th><th>mode</th><th>IS Sharpe</th><th>OOS Sharpe</th><th>OOS return</th><th>B&amp;H return</th><th>Default return</th><th>Giao dịch OOS</th></tr>` +
       w.folds.map((r) => `<tr><td>${r.fold + 1}</td><td>${fmtDate(r.test_start)}</td><td>${pc(r.dl)}</td><td>${pc(r.dh)}</td><td>${r.n}</td><td>${r.mode}</td><td>${r.is_sharpe.toFixed(2)}</td><td>${r.oos_sharpe.toFixed(2)}</td><td>${pc(r.oos_return)}</td><td>${pc(r.bh_return)}</td><td>${pc(r.def_return)}</td><td>${r.oos_trades}</td></tr>`).join("") + "</table></details>";
   }).join("");

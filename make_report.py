@@ -63,6 +63,14 @@ def load_sweep(s):
             "topwide": int((top.dh == df.dh.max()).sum()), "dhmax": float(df.dh.max())}
 
 
+def load_wf(s):
+    p = g.LOG_PATH.parent / f"{s}_folds.csv"
+    if not p.exists():
+        return None
+    f = pd.read_csv(p)
+    return {"folds": f.round(4).to_dict("records"), "sum": {k: float(v) for k, v in g.wf_summary(f).items()}}
+
+
 def progress():
     txt = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
     return [{"done": d == "x", "n": int(n), "text": t.strip()} for d, n, t in re.findall(r"- \[( |x)\] \*\*STEP (\d+)\*\* (.+)", txt)]
@@ -126,7 +134,7 @@ def build():
         "td": ms(vol.index), "vol": {s: r4(vol[s]) for s in SYMS},
         "months": months, "mret": {s: r4(mret[s] * 100) for s in SYMS},
         "corr": ret.corr().round(3).values.tolist(),
-        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "progress": progress(), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
+        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "wf": {s: load_wf(s) for s in SYMS}, "progress": progress(), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
         "rawlog": g.LOG_PATH.read_text(encoding="utf-8"),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }

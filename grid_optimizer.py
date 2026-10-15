@@ -223,6 +223,67 @@ def run_sweep(symbol, tf, df, window_days, fee):
     return res
 
 
+# --- STEP 5: walk-forward (train -> test, trượt) ---
+DAY_MS = 86_400_000
+DEFAULT_GRID = {"dl": 0.10, "dh": 0.10, "n": 20, "mode": "arithmetic"}  # lưới mặc định để so sánh
+
+
+def _grid_oos(P, dl, dh, n, mode, fee, bpy):
+    """Đặt lưới tại giá đầu của P (tham số tương đối) rồi đo hiệu suất trên P."""
+    low, high = P[0] * (1 - dl), P[0] * (1 + dh)
+    trades, turn = grid_stats(P, low, high, n, mode)
+    return metrics(grid_equity(P, low, high, n, mode, fee), bpy, trades, turn)
+
+
+def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, step_days=30, space=None, safety=2.0):
+    """Mỗi fold: sweep trên train [a,b), chọn tham số tốt nhất, áp tại giá đầu test [b,c). Chỉ dùng dữ liệu < b để chọn."""
+    ts, px = df.ts.values, df.close.values
+    bpy, space, rows, k = BARS_PER_YEAR[tf], space or space_for(symbol), [], 0
+    while True:
+        a = ts[0] + k * step_days * DAY_MS
+        b, c = a + train_days * DAY_MS, a + (train_days + test_days) * DAY_MS
+        if c > ts[-1] + BAR_MS[tf]:
+            break
+        i0, i1, i2 = np.searchsorted(ts, [a, b, c])
+        tr, te = px[i0:i1], px[i1:i2]
+        res = sweep(tr, space, fee, bpy, safety)
+        if res.empty:
+            log.info("WF %s fold %d: không có tổ hợp qua lọc, bỏ qua", symbol, k)
+            k += 1
+            continue
+        best = res.iloc[0]  # đỉnh in-sample (STEP 6 sẽ thay bằng tham số phẳng)
+        oos = _grid_oos(te, best.dl, best.dh, int(best.n), best["mode"], fee, bpy)
+        dfl = _grid_oos(te, **DEFAULT_GRID, fee=fee, bpy=bpy)
+        bh = metrics(buy_and_hold(te), bpy)
+        rows.append({"fold": k, "train_last_ts": int(ts[i1 - 1]), "test_start": int(ts[i1]), "test_end": int(ts[i2 - 1]),
+                     "dl": best.dl, "dh": best.dh, "n": int(best.n), "mode": best["mode"], "step_pct": best.step_pct,
+                     "is_sharpe": best.sharpe, "oos_sharpe": oos["sharpe"], "oos_return": oos["return"], "oos_mdd": oos["mdd"],
+                     "oos_trades": oos["trades"], "bh_sharpe": bh["sharpe"], "bh_return": bh["return"], "bh_mdd": bh["mdd"],
+                     "def_sharpe": dfl["sharpe"], "def_return": dfl["return"], "def_mdd": dfl["mdd"], "def_trades": dfl["trades"]})
+        k += 1
+    return pd.DataFrame(rows)
+
+
+def wf_summary(f):
+    return {"folds": len(f), "oos_sharpe_median": f.oos_sharpe.median(), "bh_sharpe_median": f.bh_sharpe.median(),
+            "def_sharpe_median": f.def_sharpe.median(), "is_sharpe_median": f.is_sharpe.median(),
+            "pct_profit": float((f.oos_return > 0).mean() * 100), "pct_beat_bh": float((f.oos_return > f.bh_return).mean() * 100),
+            "oos_return_median": f.oos_return.median(), "bh_return_median": f.bh_return.median()}
+
+
+def run_wf(symbol, tf, df, train, test, step, fee):
+    t0 = time.time()
+    f = walk_forward(df, tf, symbol, fee, train, test, step)
+    out = Path(__file__).parent / "results" / f"{symbol}_folds.csv"
+    out.parent.mkdir(exist_ok=True)
+    f.to_csv(out, index=False)
+    s = wf_summary(f)
+    log.info("WF %s train=%dd test=%dd step=%dd: %d folds, %.1fs. OOS Sharpe median=%.2f (B&H %.2f, default %.2f, in-sample %.2f); "
+             "%%fold lãi=%.0f%%, %%fold hơn B&H=%.0f%%", symbol, train, test, step, s["folds"], time.time() - t0, s["oos_sharpe_median"],
+             s["bh_sharpe_median"], s["def_sharpe_median"], s["is_sharpe_median"], s["pct_profit"], s["pct_beat_bh"])
+    return f
+
+
 def report(symbol, tf, df):
     bar = BAR_MS[tf]
     gaps = int(((df.ts.diff().dropna() // bar) - 1).clip(lower=0).sum())
@@ -238,6 +299,10 @@ def main():
     ap.add_argument("--sweep", action="store_true", help="STEP 4: quét tham số trên cửa sổ cuối (in-sample)")
     ap.add_argument("--window", type=int, default=90, help="số ngày của cửa sổ sweep")
     ap.add_argument("--fee", type=float, default=DEFAULT_FEE)
+    ap.add_argument("--walkforward", action="store_true", help="STEP 5: walk-forward OOS")
+    ap.add_argument("--train", type=int, default=90)
+    ap.add_argument("--test", type=int, default=30)
+    ap.add_argument("--step", type=int, default=30)
     a = ap.parse_args()
     LOG_PATH.parent.mkdir(exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s",
@@ -250,6 +315,8 @@ def main():
         log.info("%s B&H: sharpe=%.2f return=%+.1f%% mdd=%.1f%%", s, m["sharpe"], 100 * m["return"], 100 * m["mdd"])
         if a.sweep:
             run_sweep(s, a.tf, df, a.window, a.fee)
+        if a.walkforward:
+            run_wf(s, a.tf, df, a.train, a.test, a.step, a.fee)
 
 
 if __name__ == "__main__":

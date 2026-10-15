@@ -55,6 +55,16 @@ th { color:var(--ink2); font-weight:600; }
 details { margin-top:10px; } summary { cursor:pointer; color:var(--ink2); font-size:13px; }
 pre { overflow:auto; font-size:12px; background:var(--bg); padding:10px; border-radius:8px; max-height:340px; }
 button { background:var(--surface); color:var(--ink); border:1px solid var(--axis); border-radius:8px; padding:4px 10px; cursor:pointer; float:right; }
+.callout { background:var(--bg); border-radius:10px; padding:12px 14px; font-size:14px; }
+.callout ul { margin:6px 0 0; padding-left:20px; } .callout li { margin:3px 0; }
+.vcard { background:var(--bg); border-radius:12px; padding:14px; }
+.vcard h3 { margin:0 0 8px; font-size:15px; } .vcard ul { margin:6px 0; padding-left:20px; font-size:14px; } .vcard p { margin:8px 0; font-size:14px; }
+.badge { display:inline-block; padding:2px 10px; border-radius:99px; font-size:12px; font-weight:600; vertical-align:1px; }
+.badge.good { background:color-mix(in srgb, var(--s3) 30%, var(--surface)); }
+.badge.warn { background:color-mix(in srgb, var(--s4) 30%, var(--surface)); }
+.badge.bad { background:color-mix(in srgb, var(--neg) 30%, var(--surface)); }
+.param { background:var(--surface); border-radius:8px; padding:10px 12px; font-size:14px; margin-top:8px; } .param ul { margin:6px 0 0; }
+.warnli { color:var(--ink2); }
 .tag { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; background:var(--bg); color:var(--ink2); }
 </style>
 </head>
@@ -64,11 +74,6 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   <h1>Grid Opt · Báo cáo dữ liệu & log</h1>
   <p class="sub" id="meta"></p>
   <div class="kpis" id="kpis"></div>
-
-  <section class="card">
-    <h2>Tiến độ các step</h2>
-    <div id="progress"></div>
-  </section>
 
   <section class="card">
     <h2>1. Giá chuẩn hóa (đầu kỳ = 100)</h2>
@@ -84,9 +89,9 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>3. Biến động 30 ngày (annualized, %)</h2>
-    <p class="sub">Độ lệch chuẩn lợi suất ngày × √365. Vàng thấp hơn crypto rõ rệt, nên phí chiếm tỷ trọng lớn hơn trên bước lưới nhỏ.</p>
-    <div class="legend" data-legend></div><div id="c-vol"></div>
+    <h2>3. ATR(14) daily (% giá close)</h2>
+    <p class="sub">Average True Range 14 ngày (làm mượt kiểu Wilder) của nến ngày, chia cho giá close. Cho biết một ngày điển hình giá chạy khoảng bao nhiêu %, kể cả khoảng gap giữa hai ngày. Vàng thấp hơn crypto nhiều, nên cùng một bước lưới 0.4% chiếm phần lớn hơn của biên độ ngày.</p>
+    <div class="legend" data-legend></div><div id="c-atr"></div>
   </section>
 
   <section class="card">
@@ -98,10 +103,10 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>5. Scatter regime theo ticker</h2>
-    <p class="sub">Mỗi điểm là một ngày: x = lợi suất 30 ngày trước đó, y = biến động 30 ngày (annualized). Màu theo regime, đo bằng Efficiency Ratio 30 ngày (|dịch chuyển ròng| / tổng quãng đường).</p>
-    <div class="legend"><span><i style="background:var(--muted)"></i>Range (grid thuận lợi)</span><span><i style="background:var(--pos)"></i>Trend lên</span><span><i style="background:var(--neg)"></i>Trend xuống</span></div>
-    <div class="row2" id="scatters"></div>
+    <h2>5. Scatter regime theo ngày: NORMAL vs STRESS</h2>
+    <p class="sub" id="reg-sub"></p>
+    <div class="legend"><span><i style="background:var(--s1)"></i>NORMAL</span><span><i style="background:var(--neg)"></i>STRESS</span></div>
+    <div id="regimes"></div>
     <p class="note" id="reg-note"></p>
   </section>
 
@@ -124,41 +129,33 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>9. Lịch fold walk-forward dự kiến</h2>
+    <h2>9. Lịch fold walk-forward (theo cấu hình đã chạy)</h2>
     <p class="sub" id="fold-sub"></p>
-    <div class="legend"><span><i style="background:var(--muted)"></i>Train 90 ngày</span><span><i style="background:var(--s1)"></i>Test 30 ngày</span></div>
+    <div class="legend"><span><i style="background:var(--muted)"></i>IS: tìm tham số tối ưu</span><span><i style="background:var(--s4)"></i>OOS: chọn tham số ổn định</span><span><i style="background:var(--s1)"></i>Forward: đo hiệu suất (chưa từng dùng để chọn)</span></div>
     <div id="folds"></div>
   </section>
 
   <section class="card">
-    <h2>10. STEP 4: Sweep tham số (IN-SAMPLE)</h2>
-    <p class="sub">Cửa sổ cuối, quét dl × dh × n × mode sau bộ lọc bước% ≥ 2·fee·2, n ≤ MAX_GRIDS, trades ≥ 20. <b>Chưa dùng để kết luận</b>: không có kiểm định ngoài mẫu.</p>
-    <div id="sweep"></div>
-  </section>
-
-  <section class="card">
-    <h2>11. STEP 5–7: IS → OOS → forward, tham số ổn định vs đỉnh nhọn vs phẳng vs DGT</h2>
-    <p class="sub">Mỗi fold (trượt 1 tuần): <b>IS 4 tuần</b> tìm tham số tối ưu; <b>OOS 1 tuần</b> chấm lại các ứng viên và chọn tham số ổn định (tốt ở cả IS lẫn OOS); <b>forward 1 tuần</b> kế tiếp mới đo hiệu suất. Tuần forward chưa từng dùng để chọn tham số.</p>
-    <div class="legend"><span><i style="background:var(--s1)"></i>Grid ổn định (forward)</span><span><i style="background:var(--muted)"></i>Buy &amp; Hold</span><span><i style="background:var(--s2)"></i>Grid mặc định (±10%, n=20)</span></div>
+    <h2>10. Tối ưu và walk-forward (tóm tắt)</h2>
+    <p class="sub">So sánh các cách chọn tham số trên cùng các tuần forward. Sharpe là trung vị của từng tuần (quy ra năm); % tuần lãi là tỷ lệ tuần forward có lợi suất dương.</p>
     <div id="wf"></div>
   </section>
 
   <section class="card">
-    <h2>12. STEP 8: Ý nghĩa thống kê &amp; độ nhạy</h2>
-    <p class="sub">Sharpe OOS gộp mọi fold (grid phẳng) với khoảng tin cậy 95% bằng block bootstrap (khối 1 ngày, 2000 lần). Deflated Sharpe trừ đi hiệu ứng thử nhiều tổ hợp.</p>
+    <h2>11. Kết quả có đáng tin không? (ý nghĩa thống kê và độ nhạy)</h2>
+    <div id="howto"></div>
     <div id="stats"></div>
-    <h2 style="font-size:15px;margin-top:20px">Độ nhạy với phí và timeframe (Sharpe OOS trung vị)</h2>
+    <h2 style="font-size:16px;margin-top:24px">Kết quả có đổi nhiều khi đổi phí hoặc khung nến không?</h2>
     <div id="sens"></div>
   </section>
 
   <section class="card">
-    <h2>13. STEP 9: Tóm tắt cuối và equity OOS</h2>
-    <p class="sub">Kết quả từ <code>python grid_optimizer.py</code> (IS 28 ngày / OOS 7 ngày / forward 7 ngày, phí 0.1%). Tham số khuyến nghị đi qua đúng quy trình IS → OOS trên dữ liệu mới nhất, tương đối theo giá hiện tại.</p>
+    <h2>12. Kết luận và tham số khuyến nghị</h2>
     <div id="final"></div>
   </section>
 
   <section class="card">
-    <h2>14. Lịch sử chạy (results/run.log)</h2>
+    <h2>13. Lịch sử chạy (results/run.log)</h2>
     <div id="runs"></div>
     <details><summary>Log gốc</summary><pre id="rawlog"></pre></details>
   </section>
@@ -272,7 +269,7 @@ function render() {
   const mk = (key, x) => SYMS.map((s, i) => ({ name: s, color: COL[i], y: D[key][s] }));
   lineChart($("c-px"), { x: D.t4, series: mk("px"), fmt: (v, t) => v.toFixed(t ? 1 : 0), ref: 100 });
   lineChart($("c-dd"), { x: D.t4, series: mk("dd"), fmt: (v, t) => v.toFixed(t ? 1 : 0) + "%", ref: 0 });
-  lineChart($("c-vol"), { x: D.td, series: mk("vol"), fmt: (v, t) => v.toFixed(t ? 1 : 0) + "%" });
+  lineChart($("c-atr"), { x: D.td, series: mk("atr"), fmt: (v, t) => v.toFixed(t ? 2 : 1) + "%" });
 
   const M = D.met;
   $("metric-bars").innerHTML =
@@ -286,20 +283,7 @@ function render() {
   heat("heat", SYMS, D.months, SYMS.map((s) => D.mret[s]), (v) => v.toFixed(1), (v, mx) => [v >= 0 ? "--pos" : "--neg", Math.min(1, Math.abs(v) / mx)], mmax);
   heat("corr", SYMS, SYMS, D.corr, (v) => v.toFixed(2), (v) => ["--pos", Math.max(0, v)], 1);
 
-  // fold schedule: train 90 / test 30 / trượt 30
-  const nf = Math.floor((days - 120) / 30) + 1, W = Math.max(320, $("folds").clientWidth), rh = 18, h = nf * rh + 28, L = 46;
-  const X = (ms) => L + ((ms - t0) / (t1 - t0)) * (W - L - 8);
-  let g = "";
-  for (let f = 0; f < nf; f += 1) {
-    const a = t0 + f * 30 * 864e5, b = a + 90 * 864e5, c = b + 30 * 864e5, y = f * rh + 4;
-    g += `<text x="${L - 6}" y="${y + 11}" text-anchor="end">#${f + 1}</text>
-      <rect x="${X(a)}" y="${y}" width="${X(b) - X(a)}" height="12" rx="3" style="fill:var(--muted)"><title>Fold ${f + 1} train ${fmtDate(a)} → ${fmtDate(b)}</title></rect>
-      <rect x="${X(b)}" y="${y}" width="${X(c) - X(b)}" height="12" rx="3" style="fill:var(--s1)"><title>Fold ${f + 1} test ${fmtDate(b)} → ${fmtDate(c)}</title></rect>`;
-  }
-  g += `<text x="${L}" y="${h - 4}">${fmtDate(t0)}</text><text x="${W - 8}" y="${h - 4}" text-anchor="end">${fmtDate(t1)}</text>`;
-  $("folds").innerHTML = svgEl(W, h, g);
-  $("fold-sub").textContent = `Với ${days.toFixed(0)} ngày dữ liệu có khoảng ${nf} fold OOS mỗi cặp: đủ để chạy nhưng khoảng tin cậy của Sharpe OOS sẽ rộng.`;
-
+  foldSchedule();
   $("runs").innerHTML = `<table><tr><th>#</th><th>Thời điểm</th><th>Tham số</th><th>Cặp</th><th>Nến</th><th>Gap</th><th>Cache trước → sau</th><th>Hàng thô tải</th><th>Thời gian (s)</th></tr>` +
     D.runs.flatMap((r, i) => Object.entries(r.syms).map(([s, d], k) =>
       `<tr><td>${k === 0 ? i + 1 : ""}</td><td>${k === 0 ? r.t : ""}</td><td style="text-align:left;max-width:240px;overflow:hidden;text-overflow:ellipsis">${k === 0 ? r.args : ""}</td>
@@ -307,7 +291,9 @@ function render() {
   $("rawlog").textContent = D.rawlog;
   legend();
   renderDist();
-  renderSteps();
+  renderWF();
+  renderStats();
+  renderFinal();
 }
 
 function wfChart(f) {
@@ -329,108 +315,157 @@ function wfChart(f) {
   return svgEl(W, H, g);
 }
 
+
+const BAR = { "5m": 3e5, "15m": 9e5, "1h": 36e5 }[D.tf] || 9e5;
+const pcs = (v, d = 1) => (v * 100).toFixed(d) + "%";
+
+function foldSchedule() {
+  const fs = D.fold_sched;
+  if (!fs) { $("folds").innerHTML = `<p class="note">Chưa có kết quả walk-forward. Chạy <code>python grid_optimizer.py</code>.</p>`; return; }
+  const c = fs.cfg, n = fs.folds.length, W = Math.max(320, $("folds").clientWidth), rh = 8, L = 40, h = n * rh + 30;
+  const t0 = fs.folds[0][0], t1 = fs.folds[n - 1][4] + BAR, X = (ms) => L + ((ms - t0) / (t1 - t0)) * (W - L - 8);
+  let g = "";
+  fs.folds.forEach((f, i) => {
+    const y = i * rh + 2, [a, b, s, ts0, te] = f;
+    const box = (x0, x1, col, lab) => `<rect x="${X(x0)}" y="${y}" width="${Math.max(1, X(x1) - X(x0))}" height="${rh - 2}" style="fill:${col}"><title>Fold ${i + 1} · ${lab}: ${fmtDate(x0)} → ${fmtDate(x1)}</title></rect>`;
+    g += box(a, b + BAR, "var(--muted)", "IS") + box(b + BAR, s + BAR, "var(--s4)", "OOS") + box(ts0, te + BAR, "var(--s1)", "Forward");
+    if (i % 10 === 0) g += `<text x="${L - 6}" y="${y + 7}" text-anchor="end">#${i + 1}</text>`;
+  });
+  g += `<text x="${L}" y="${h - 6}">${fmtDate(t0)}</text><text x="${W - 8}" y="${h - 6}" text-anchor="end">${fmtDate(t1)}</text>`;
+  $("folds").innerHTML = svgEl(W, h, g);
+  $("fold-sub").innerHTML = `Mỗi fold dùng <b>${c.is_days} ngày IS</b> để tìm tham số tối ưu, <b>${c.sel_days} ngày OOS</b> để chọn tham số ổn định, rồi <b>${c.fwd_days} ngày forward</b> để đo hiệu suất; cửa sổ trượt ${c.step_days} ngày nên có <b>${fs.n} fold</b> mỗi cặp (số liệu của ${fs.symbol}). Mỗi tuần chỉ làm forward đúng một lần.`;
+}
+
 function renderWF() {
   const have = SYMS.filter((s) => D.wf[s]);
-  if (!have.length) { $("wf").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --walkforward</code> rồi <code>python make_report.py</code>.</p>`; return; }
-  const pc = (v) => (v * 100).toFixed(1) + "%";
-  $("wf").innerHTML = have.map((s) => {
-    const w = D.wf[s], S = w.sum, i = SYMS.indexOf(s);
-    const verdict = S.s_oos_sharpe_median > S.bh_sharpe_median ? "Grid ổn định tốt hơn B&H (trung vị Sharpe forward)" : "Grid ổn định KHÔNG tốt hơn B&H (trung vị Sharpe forward)";
-    return `<h2 style="font-size:15px;margin-top:18px"><span class="tag" style="background:${COL[i]};color:#fff">${s}</span> ${S.folds} fold · ${verdict}</h2>
-      <div class="kpis">
-        <div class="kpi"><b>${S.s_oos_sharpe_median.toFixed(2)}</b><span>Sharpe forward trung vị (ổn định)</span></div>
-        <div class="kpi"><b>${S.oos_sharpe_median.toFixed(2)}</b><span>Sharpe forward trung vị (đỉnh nhọn)</span></div>
-        <div class="kpi"><b>${S.f_oos_sharpe_median.toFixed(2)}</b><span>Sharpe forward trung vị (phẳng)</span></div>
-        <div class="kpi"><b>${S.bh_sharpe_median.toFixed(2)}</b><span>Sharpe B&amp;H trung vị</span></div>
-        <div class="kpi"><b>${S.def_sharpe_median.toFixed(2)}</b><span>Sharpe lưới mặc định</span></div>
-        <div class="kpi"><b>${S.s_is_sharpe_median.toFixed(2)}</b><span>Sharpe IS của tham số ổn định</span></div>
-        <div class="kpi"><b>${S.s_sel_sharpe_median.toFixed(2)}</b><span>Sharpe OOS-select của tham số ổn định</span></div>
-        <div class="kpi"><b>${S.s_pct_profit.toFixed(0)}%</b><span>Fold forward có lãi (ổn định)</span></div>
-        <div class="kpi"><b>${S.s_pct_beat_bh.toFixed(0)}%</b><span>Fold hơn B&amp;H (return)</span></div>
-      </div>
+  if (!have.length) { $("wf").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py</code>.</p>`; return; }
+  const rows = [["Buy &amp; Hold", "bh_sharpe_median", "bh_pct_profit"], ["Grid mặc định (±10%, n=20)", "def_sharpe_median", "def_pct_profit"],
+    ["Grid đỉnh nhọn (chỉ IS)", "oos_sharpe_median", "pct_profit"], ["Grid phẳng", "f_oos_sharpe_median", "f_pct_profit"],
+    ["<b>Grid ổn định (IS → OOS)</b>", "s_oos_sharpe_median", "s_pct_profit"], ["DGT (tham số ổn định)", "dgt_sharpe_median", "dgt_pct_profit"]];
+  const best = {};
+  have.forEach((s) => { best[s] = Math.max(...rows.slice(1).map((r) => D.wf[s].sum[r[1]])); });
+  $("wf").innerHTML = `<table><tr><th rowspan="2">Chiến lược</th>${have.map((s) => `<th colspan="2" style="text-align:center">${s.replace("USDT", "")}</th>`).join("")}</tr>
+    <tr>${have.map(() => "<th>Sharpe</th><th>% tuần lãi</th>").join("")}</tr>` +
+    rows.map((r, k) => `<tr><td>${r[0]}</td>` + have.map((s) => { const S = D.wf[s].sum, v = S[r[1]];
+      return `<td${k > 0 && v === best[s] ? ' style="font-weight:700"' : ""}>${v.toFixed(2)}</td><td>${S[r[2]].toFixed(0)}%</td>`; }).join("") + "</tr>").join("") + "</table>" +
+    `<p class="note">In đậm = Sharpe cao nhất trong các cách chọn grid. Số fold: ${have.map((s) => `${s.replace("USDT", "")} ${D.wf[s].sum.folds}`).join(", ")}.</p>`;
+  const sw = SYMS.filter((s) => D.sweep[s]);
+  let html = "";
+  if (sw.length) {
+    html += `<h2 style="font-size:15px;margin-top:20px">Tham khảo: sweep in-sample trên ${D.sweep[sw[0]].window} ngày cuối</h2>
+      <table><tr><th>Cặp</th><th>Tổ hợp qua lọc</th><th>Sharpe tốt nhất (in-sample)</th><th>Sharpe B&amp;H cùng cửa sổ</th><th>% tổ hợp hơn B&amp;H</th></tr>` +
+      sw.map((s) => { const w = D.sweep[s]; return `<tr><td>${s}</td><td>${w.passed}/${w.combos}</td><td>${w.top[0].sharpe.toFixed(2)}</td><td>${w.bh.sharpe.toFixed(2)}</td><td>${w.beat.toFixed(0)}%</td></tr>`; }).join("") +
+      `</table><p class="note">Đây là in-sample trên một cửa sổ nên chỉ để tham khảo; không dùng để kết luận. Kết luận dựa trên bảng forward ở trên.</p>`;
+  }
+  html += have.map((s) => {
+    const w = D.wf[s], i = SYMS.indexOf(s);
+    return `<details style="margin-top:10px"><summary><b>${s}</b>: chi tiết từng fold, ổn định tham số</summary>
       ${wfChart(w.folds)}
       <table style="margin-top:8px"><tr><th>Ổn định qua fold</th><th>dl median (IQR)</th><th>dh median (IQR)</th><th>bước% median (IQR)</th><th>Cờ</th></tr>` +
-      ["stable", "flat", "peak"].map((k) => { const x = w.stab[k]; return `<tr><td>${k === "peak" ? "Đỉnh nhọn" : k === "flat" ? "Phẳng" : "Ổn định"}</td><td>${pc(x.dl_median)} (${pc(x.dl_iqr)})</td><td>${pc(x.dh_median)} (${pc(x.dh_iqr)})</td><td>${pc(x.step_pct_median)} (${pc(x.step_pct_iqr)})</td><td>${x.unstable ? "UNSTABLE" : "ổn định"}</td></tr>`; }).join("") +
-      `</table><p class="note">${w.stab.peak.dh_median >= w.dhmax - 1e-9 ? "dh median nằm ở biên trên của không gian tìm kiếm: bộ tối ưu luôn đẩy dh lên mức tối đa (gần như giữ coin)." : ""}</p>
-      <table style="margin-top:8px"><tr><th>STEP 7: forward, trung vị ${S.folds} fold</th><th>Sharpe</th><th>Return</th><th>Fold lãi</th></tr>` +
-      [["Buy &amp; Hold", S.bh_sharpe_median, S.bh_return_median, S.bh_pct_profit],
-       ["Grid cố định mặc định (±10%, n=20)", S.def_sharpe_median, S.def_return_median, S.def_pct_profit],
-       ["Grid tối ưu: ổn định (IS → OOS)", S.s_oos_sharpe_median, S.s_oos_return_median, S.s_pct_profit],
-       ["Grid tối ưu: đỉnh nhọn (IS)", S.oos_sharpe_median, S.oos_return_median, S.pct_profit],
-       ["Grid tối ưu: phẳng", S.f_oos_sharpe_median, S.f_oos_return_median, S.f_pct_profit],
-       ["DGT (tham số ổn định)", S.dgt_sharpe_median, S.dgt_return_median, S.dgt_pct_profit],
-       ["DGT (lưới mặc định)", S.dgtdef_sharpe_median, S.dgtdef_return_median, null]].map((r) => `<tr><td>${r[0]}</td><td>${r[1].toFixed(2)}</td><td>${pct(r[2] * 100)}</td><td>${r[3] == null ? "–" : r[3].toFixed(0) + "%"}</td></tr>`).join("") +
-      `</table><p class="note">DGT phá biên ${S.dgt_resets_median.toFixed(0)} lần/fold (trung vị) và trả phí tái cân bằng mỗi lần reset.</p>
-      <details><summary>Bảng fold</summary><table><tr><th>Fold</th><th>Forward từ</th><th>dl</th><th>dh</th><th>n</th><th>mode</th><th>IS Sharpe</th><th>OOS-select Sharpe</th><th>Forward Sharpe</th><th>Forward return</th><th>B&amp;H return</th><th>Default return</th><th>Lệnh khớp</th></tr>` +
-      w.folds.map((r) => `<tr><td>${r.fold + 1}</td><td>${fmtDate(r.test_start)}</td><td>${pc(r.s_dl)}</td><td>${pc(r.s_dh)}</td><td>${r.s_n}</td><td>${r.s_mode}</td><td>${r.s_is_sharpe.toFixed(2)}</td><td>${r.s_sel_sharpe.toFixed(2)}</td><td>${r.s_oos_sharpe.toFixed(2)}</td><td>${pc(r.s_oos_return)}</td><td>${pc(r.bh_return)}</td><td>${pc(r.def_return)}</td><td>${r.s_oos_trades}</td></tr>`).join("") + "</table></details>";
+      ["stable", "flat", "peak"].map((k) => { const x = w.stab[k]; return `<tr><td>${k === "peak" ? "Đỉnh nhọn" : k === "flat" ? "Phẳng" : "Ổn định"}</td><td>${pcs(x.dl_median)} (${pcs(x.dl_iqr)})</td><td>${pcs(x.dh_median)} (${pcs(x.dh_iqr)})</td><td>${pcs(x.step_pct_median, 2)} (${pcs(x.step_pct_iqr, 2)})</td><td>${x.unstable ? "UNSTABLE" : "ổn định"}</td></tr>`; }).join("") +
+      `</table><details><summary>Bảng fold</summary><table><tr><th>Fold</th><th>Forward từ</th><th>dl</th><th>dh</th><th>n</th><th>mode</th><th>IS Sharpe</th><th>OOS Sharpe</th><th>Forward Sharpe</th><th>Forward return</th><th>B&amp;H return</th><th>Lệnh khớp</th></tr>` +
+      w.folds.map((r) => `<tr><td>${r.fold + 1}</td><td>${fmtDate(r.test_start)}</td><td>${pcs(r.s_dl)}</td><td>${pcs(r.s_dh)}</td><td>${r.s_n}</td><td>${r.s_mode}</td><td>${r.s_is_sharpe.toFixed(2)}</td><td>${r.s_sel_sharpe.toFixed(2)}</td><td>${r.s_oos_sharpe.toFixed(2)}</td><td>${pcs(r.s_oos_return)}</td><td>${pcs(r.bh_return)}</td><td>${r.s_oos_trades}</td></tr>`).join("") + "</table></details></details>";
   }).join("");
+  $("wf").innerHTML += html;
+}
+
+// thanh khoảng tin cậy trên trục Sharpe, vạch 0 làm mốc
+function ciChart(rows, lo = -4, hi = 4) {
+  const W = 560, rh = 34, H = rows.length * rh + 26, l = 120, r = 20, X = (v) => l + ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * (W - l - r);
+  let g = "";
+  for (let v = lo; v <= hi; v += 1) g += `<line class="gridline" x1="${X(v)}" x2="${X(v)}" y1="0" y2="${rows.length * rh}"/><text x="${X(v)}" y="${H - 8}" text-anchor="middle">${v > 0 ? "+" : ""}${v}</text>`;
+  g += `<line x1="${X(0)}" x2="${X(0)}" y1="0" y2="${rows.length * rh}" style="stroke:var(--ink);stroke-width:1.5"/>`;
+  rows.forEach((q, i) => {
+    const y = i * rh + rh / 2;
+    g += `<text x="${l - 10}" y="${y + 4}" text-anchor="end">${q.label}</text>
+      <line x1="${X(q.ci[0])}" x2="${X(q.ci[2])}" y1="${y}" y2="${y}" style="stroke:${q.color};stroke-width:5;stroke-linecap:round;opacity:.45"/>
+      <circle cx="${X(q.ci[1])}" cy="${y}" r="6" style="fill:${q.color};stroke:var(--surface);stroke-width:2"><title>${q.label}: ${q.ci[1].toFixed(2)} [${q.ci[0].toFixed(2)}, ${q.ci[2].toFixed(2)}]</title></circle>
+      <text x="${X(q.ci[1])}" y="${y - 12}" text-anchor="middle">${q.ci[1].toFixed(2)}</text>`;
+  });
+  return svgEl(W, H, g);
 }
 
 function renderStats() {
+  $("howto").innerHTML = `<div class="callout"><b>Cách đọc nhanh</b>
+    <ul>
+      <li><b>Sharpe</b>: lợi suất trên mỗi đơn vị dao động, quy ra năm. Càng cao càng tốt, trên 0 là có lãi sau khi cân rủi ro.</li>
+      <li><b>Khoảng tin cậy 95%</b> (thanh màu): kết quả "thật" có khả năng nằm trong khoảng này. <b>Nếu thanh chứa vạch 0 thì chưa thể kết luận</b> là có lợi thế, vì kết quả có thể chỉ do may rủi.</li>
+      <li><b>Hiệu grid − B&amp;H</b>: nếu thanh nằm hoàn toàn bên trái vạch 0 thì grid kém giữ coin có ý nghĩa; bên phải thì tốt hơn; chứa 0 thì chưa phân biệt được.</li>
+      <li><b>PSR</b>: xác suất Sharpe thật &gt; 0. <b>DSR</b>: như PSR nhưng trừ đi việc ta đã thử hàng nghìn tổ hợp và chọn cái đẹp nhất; cần &gt; 0.95 mới đáng tin.</li>
+    </ul></div>`;
   const have = SYMS.filter((s) => D.stats[s]);
-  if (!have.length) { $("stats").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --stats</code> và <code>--sensitivity</code>, rồi <code>python make_report.py</code>.</p>`; return; }
-  const ci = (c) => `${c[1].toFixed(2)} [${c[0].toFixed(2)}, ${c[2].toFixed(2)}]`;
-  $("stats").innerHTML = `<table><tr><th>Cặp</th><th>Sharpe OOS grid</th><th>Sharpe B&amp;H</th><th>Hiệu (grid − B&amp;H)</th><th>PSR(0)</th><th>DSR</th><th>Số tổ hợp</th><th>Kết luận</th></tr>` +
-    have.map((s) => { const x = D.stats[s]; return `<tr><td>${s}</td><td>${ci(x.grid_ci)}</td><td>${ci(x.bh_ci)}</td><td>${ci(x.diff_ci)}</td><td>${x.psr0.toFixed(3)}</td><td>${x.dsr.toFixed(3)}</td><td>${x.n_trials}</td><td style="text-align:left">${x.verdict}</td></tr>`; }).join("") + "</table>" +
-    `<p class="note">Định dạng: điểm [CI 95%]. PSR(0) = xác suất Sharpe thật &gt; 0; DSR = xác suất Sharpe thật vượt ngưỡng sinh ra do chọn tốt nhất trong N tổ hợp (cần &gt; 0.95 mới đáng tin). Sharpe gộp khác trung vị fold ở các bảng trên.</p>`;
+  if (!have.length) { $("stats").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py --stats</code>.</p>`; }
+  else {
+    $("stats").innerHTML = have.map((s) => {
+      const x = D.stats[s], i = SYMS.indexOf(s), g = x.grid_ci, d = x.diff_ci;
+      const edge = g[0] > 0 ? ["good", "Sharpe dương có ý nghĩa thống kê"] : g[2] < 0 ? ["bad", "Sharpe âm có ý nghĩa thống kê"] : ["warn", "Chưa đủ bằng chứng về lợi thế (thanh chứa 0)"];
+      const vs = d[2] < 0 ? "Grid <b>kém</b> giữ coin có ý nghĩa thống kê." : d[0] > 0 ? "Grid <b>tốt hơn</b> giữ coin có ý nghĩa thống kê." : "Chưa phân biệt được grid với giữ coin (thanh hiệu chứa 0).";
+      return `<div class="vcard"><h3><span class="tag" style="background:${COL[i]};color:#fff">${s}</span> <span class="badge ${edge[0]}">${edge[1]}</span></h3>
+        ${ciChart([{ label: "Grid", ci: g, color: COL[i] }, { label: "Buy &amp; Hold", ci: x.bh_ci, color: "var(--muted)" }, { label: "Hiệu grid − B&amp;H", ci: d, color: "var(--s4)" }])}
+        <p>Sharpe gộp của grid là <b>${g[1].toFixed(2)}</b>, khoảng tin cậy 95% từ <b>${g[0].toFixed(2)}</b> đến <b>${g[2].toFixed(2)}</b>. ${vs}</p>
+        <p class="note">PSR = ${x.psr0.toFixed(2)} (xác suất Sharpe thật &gt; 0); DSR = ${x.dsr.toFixed(2)} sau khi tính ${x.n_trials} tổ hợp đã thử; dựa trên ${x.folds} tuần forward (${x.bars.toLocaleString()} nến).</p></div>`;
+    }).join("");
+  }
   const sh = SYMS.filter((s) => D.sens[s]);
-  if (!sh.length) { $("sens").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py --sensitivity</code> (chậm, tải thêm nến 5m).</p>`; return; }
+  if (!sh.length) { $("sens").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py --sensitivity</code> (chậm, tải thêm nến 5m/1h).</p>`; return; }
   const labels = [...new Set(sh.flatMap((s) => D.sens[s].map((r) => r.kind + ":" + r.label)))];
-  const name = (l) => (l.startsWith("fee:") ? "Phí " + l.slice(4) : "Timeframe " + l.slice(3));
-  $("sens").innerHTML = `<table><tr><th>Cấu hình</th>${sh.map((s) => `<th>${s.replace("USDT", "")} ổn định / phẳng / nhọn / B&amp;H</th>`).join("")}</tr>` +
-    labels.map((l) => `<tr><td>${name(l)}</td>` + sh.map((s) => { const r = D.sens[s].find((q) => q.kind + ":" + q.label === l); return r ? `<td>${r.s_oos_sharpe_median.toFixed(2)} / ${r.f_oos_sharpe_median.toFixed(2)} / ${r.oos_sharpe_median.toFixed(2)} / ${r.bh_sharpe_median.toFixed(2)}</td>` : "<td>–</td>"; }).join("") + "</tr>").join("") + "</table>";
+  const name = (l) => (l.startsWith("fee:") ? "Phí " + l.slice(4) : "Khung nến " + l.slice(3));
+  const all = sh.flatMap((s) => D.sens[s].map((r) => r.s_oos_sharpe_median)), mx = Math.max(...all.map(Math.abs), 1e-9);
+  $("sens").innerHTML = `<p class="sub">Sharpe forward trung vị của grid ổn định khi đổi phí giao dịch (15m) hoặc khung nến (phí 0.1%). Ô đậm hơn = Sharpe cao hơn. Hàng "Phí 1×" và "Khung nến 15m" là cấu hình gốc.</p>
+    <table class="heat"><tr><th>Cấu hình</th>${sh.map((s) => `<th>${s.replace("USDT", "")}</th>`).join("")}</tr>` +
+    labels.map((l) => `<tr><th style="text-align:left">${name(l)}</th>` + sh.map((s) => { const r = D.sens[s].find((q) => q.kind + ":" + q.label === l); if (!r) return "<td></td>"; const v = r.s_oos_sharpe_median;
+      return `<td style="background:color-mix(in srgb, var(--pos) ${Math.round(Math.min(1, Math.abs(v) / mx) * 62)}%, var(--surface))" title="Phẳng ${r.f_oos_sharpe_median.toFixed(2)} · nhọn ${r.oos_sharpe_median.toFixed(2)} · B&H ${r.bh_sharpe_median.toFixed(2)} · ${r.folds} fold">${v.toFixed(2)}</td>`; }).join("") + "</tr>").join("") + "</table>" +
+    `<p class="note">Cách đọc: phí tăng gấp đôi làm Sharpe giảm ở mọi cặp, mạnh nhất ở vàng vì bước lưới của vàng nhỏ. Khung nến thưa hơn làm Sharpe thấp hơn ở crypto, vì mô phỏng chỉ thấy giá đóng cửa nên bỏ sót các lần chạm vạch trong nến. Chênh lệch nhỏ giữa các ô nằm trong nhiễu.</p>`;
+}
+
+function verdict(r, w) {
+  const bullets = [], dMdd = (r.oos_mdd - r.bh_mdd) * 100;
+  const better = r.oos_return > r.bh_return;
+  bullets.push(`<b>Rủi ro:</b> sụt giảm tối đa ${pcs(r.oos_mdd)} so với ${pcs(r.bh_mdd)} nếu giữ coin (${dMdd > 0 ? "giảm" : "tăng"} ${Math.abs(dMdd).toFixed(0)} điểm %).`);
+  bullets.push(`<b>Lợi nhuận gộp:</b> ${pct(r.oos_return * 100)} so với ${pct(r.bh_return * 100)} của giữ coin (${better ? "grid tốt hơn" : "grid kém hơn"}).`);
+  bullets.push(`<b>Độ đều:</b> ${r.pct_fold_profit.toFixed(0)}% số tuần forward có lãi${w ? ` (giữ coin: ${w.sum.bh_pct_profit.toFixed(0)}%)` : ""}.`);
+  const ci = r.sharpe_ci_lo <= 0 && r.sharpe_ci_hi >= 0;
+  bullets.push(`<b>Ý nghĩa thống kê:</b> Sharpe gộp ${r.oos_sharpe_pooled.toFixed(2)}, khoảng tin cậy [${r.sharpe_ci_lo.toFixed(2)}, ${r.sharpe_ci_hi.toFixed(2)}] ${ci ? "chứa 0, chưa đủ bằng chứng có lợi thế" : r.sharpe_ci_lo > 0 ? "nằm trên 0" : "nằm dưới 0"}.`);
+  let badge;
+  if (!ci && r.sharpe_ci_lo > 0) badge = ["good", "Có dấu hiệu lợi thế"];
+  else if (dMdd > 0 && !better) badge = ["warn", "Giảm rủi ro, bỏ lỡ xu hướng"];
+  else if (dMdd > 0) badge = ["warn", "Giảm rủi ro, chưa đủ bằng chứng"];
+  else badge = ["bad", "Chưa thấy lợi ích"];
+  return { bullets, badge };
 }
 
 function renderFinal() {
-  if (!D.summary) { $("final").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py</code> rồi <code>python make_report.py</code>.</p>`; return; }
-  const pc = (v, d = 1) => (v * 100).toFixed(d) + "%";
-  $("final").innerHTML = `<table><tr><th>Cặp</th><th>Sharpe OOS gộp [CI 95%]</th><th>Sharpe median fold</th><th>Return OOS</th><th>B&amp;H</th><th>MDD OOS</th><th>Fold lãi</th><th>Khuyến nghị dl / dh / n / bước% / mode</th><th>Ổn định</th><th>Kết luận</th></tr>` +
-    D.summary.map((r) => `<tr><td>${r.symbol}</td><td>${r.oos_sharpe_pooled.toFixed(2)} [${r.sharpe_ci_lo.toFixed(2)}, ${r.sharpe_ci_hi.toFixed(2)}]</td><td>${r.oos_sharpe_median.toFixed(2)}</td><td>${pc(r.oos_return)}</td><td>${pc(r.bh_return)}</td><td>${pc(r.oos_mdd)}</td><td>${r.pct_fold_profit.toFixed(0)}%</td><td>${pc(r.rec_dl)} / ${pc(r.rec_dh)} / ${r.rec_n} / ${pc(r.rec_step_pct, 2)} / ${r.rec_mode}</td><td>${r.unstable}</td><td style="text-align:left">${r.edge}</td></tr>`).join("") + `</table>
-    <p class="note">Tham số khuyến nghị chỉ để thử nghiệm: cột Ổn định cho biết tham số có đổi nhiều giữa các fold hay không. CI 95% của Sharpe OOS gộp chứa 0 nghĩa là chưa có bằng chứng thống kê về edge, dù grid giảm drawdown và lãi ở đa số fold.</p>
-    <div class="row2" id="oos-eq"></div>`;
-  const items = Object.entries(D.oos_eq || {}).map(([s, v], i) => {
-    const el = document.createElement("div"), c = document.createElement("div");
-    el.innerHTML = `<h2 style="font-size:14px">${s}</h2><div class="legend"><span><i style="background:${COL[i]}"></i>Grid OOS</span><span><i style="background:var(--muted)"></i>Buy &amp; Hold</span></div>`;
+  if (!D.summary) { $("final").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py</code>.</p>`; return; }
+  const cards = D.summary.map((r) => {
+    const i = SYMS.indexOf(r.symbol), w = D.wf[r.symbol], v = verdict(r, w);
+    const narrow = r.rec_dh < 0.02 ? `<li class="warnli">Range chỉ cao hơn giá ${pcs(r.rec_dh, 2)}: gần như toàn bộ lưới nằm dưới giá, lưới sẽ đứng ngoài khi giá tăng.</li>` : "";
+    return `<div class="vcard"><h3><span class="tag" style="background:${COL[i]};color:#fff">${r.symbol}</span> <span class="badge ${v.badge[0]}">${v.badge[1]}</span></h3>
+      <ul>${v.bullets.map((b) => `<li>${b}</li>`).join("")}</ul>
+      <div class="param"><b>Tham số khuyến nghị (thử nghiệm)</b>
+        <div>Khoảng giá <b>${r.rec_low.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b> → <b>${r.rec_high.toLocaleString(undefined, { maximumFractionDigits: 2 })}</b> (dl ${pcs(r.rec_dl)}, dh ${pcs(r.rec_dh)})</div>
+        <div>${r.rec_n} lưới, bước ${pcs(r.rec_step_pct, 2)}, kiểu ${r.rec_mode}</div>
+        <ul><li class="warnli">${r.unstable === "UNSTABLE" ? "Tham số đổi nhiều giữa các tuần (UNSTABLE): chỉ nên dùng làm điểm khởi đầu." : "Tham số tương đối ổn định giữa các tuần."}</li>${narrow}</ul></div></div>`;
+  }).join("");
+  $("final").innerHTML = `<p class="sub">Kết quả của <code>python grid_optimizer.py</code>: mỗi tuần dùng tham số chọn từ 4 tuần IS + 1 tuần OOS, rồi nối các tuần forward lại. Phí 0.1% mỗi chiều.</p>
+    <div class="row2">${cards}</div>
+    <table style="margin-top:16px"><tr><th>Cặp</th><th>Return grid</th><th>Return B&amp;H</th><th>MDD grid</th><th>MDD B&amp;H</th><th>Sharpe gộp [CI 95%]</th><th>Sharpe trung vị tuần</th><th>Tuần lãi</th></tr>` +
+    D.summary.map((r) => `<tr><td>${r.symbol}</td><td>${pcs(r.oos_return)}</td><td>${pcs(r.bh_return)}</td><td>${pcs(r.oos_mdd)}</td><td>${pcs(r.bh_mdd)}</td><td>${r.oos_sharpe_pooled.toFixed(2)} [${r.sharpe_ci_lo.toFixed(2)}, ${r.sharpe_ci_hi.toFixed(2)}]</td><td>${r.oos_sharpe_median.toFixed(2)}</td><td>${r.pct_fold_profit.toFixed(0)}%</td></tr>`).join("") + `</table>
+    <p class="note"><b>Vì sao Sharpe trung vị tuần (2 đến 3) cao hơn Sharpe gộp (gần 0)?</b> Đa số tuần lãi nhỏ nên trung vị đẹp, nhưng vài tuần lỗ lớn kéo kết quả gộp xuống. Trung vị không phản ánh phần đuôi này, nên kết luận dựa trên Sharpe gộp và khoảng tin cậy.</p>
+    <h2 style="font-size:16px;margin-top:20px">Equity nối các tuần forward so với giữ coin (vốn đầu = 1)</h2>
+    <div class="row2" id="oos-eq"></div>
+    <div class="callout" style="margin-top:16px"><b>Cần lưu ý khi dùng kết quả</b><ul>
+      <li>Chỉ một giai đoạn thị trường (khoảng ${((D.span[1] - D.span[0]) / 864e5 / 30).toFixed(0)} tháng); kết quả có thể không lặp lại ở chế độ thị trường khác.</li>
+      <li>Mô phỏng dùng giá đóng cửa nến ${D.tf}, không có trượt giá, độ trễ hay hàng đợi lệnh.</li>
+      <li>Phí 0.1% mỗi chiều lấy từ ảnh app; giới hạn số lưới của Bitget chưa xác minh được.</li>
+      <li>PAXG và XAUT cùng neo giá vàng nên không phải hai bằng chứng độc lập.</li>
+    </ul></div>`;
+  const items = Object.entries(D.oos_eq || {}).map(([s, v]) => {
+    const i = SYMS.indexOf(s), el = document.createElement("div"), c = document.createElement("div");
+    el.innerHTML = `<h2 style="font-size:14px">${s}</h2><div class="legend"><span><i style="background:${COL[i]}"></i>Grid (forward nối tiếp)</span><span><i style="background:var(--muted)"></i>Buy &amp; Hold</span></div>`;
     el.appendChild(c); $("oos-eq").appendChild(el);
     return [c, s, v, i];
   });
   items.forEach(([c, s, v, i]) => lineChart(c, { x: v.t, series: [{ name: s, color: COL[i], y: v.grid }, { name: "B&H", color: "var(--muted)", y: v.bh }], fmt: (x, t) => x.toFixed(t ? 3 : 2), h: 240, ref: 1 }));
-}
-
-function renderSteps() {
-  const done = D.progress.filter((p) => p.done).length;
-  $("progress").innerHTML = `<p class="sub">${done}/${D.progress.length} step hoàn thành</p><table>` +
-    D.progress.map((p) => `<tr><td style="width:28px">${p.done ? "✔" : "○"}</td><td style="text-align:left"><b>STEP ${p.n}</b> ${p.text.replace(/\*\*/g, "")}</td></tr>`).join("") + "</table>";
-  renderWF();
-  renderStats();
-  renderFinal();
-  const have = SYMS.filter((s) => D.sweep[s]);
-  if (!have.length) { $("sweep").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --sweep</code> rồi <code>python make_report.py</code>.</p>`; return; }
-  const pc = (v) => (v * 100).toFixed(1) + "%", row = (r) => `<tr><td>${pc(r.dl)}</td><td>${pc(r.dh)}</td><td>${r.n}</td><td>${r.mode}</td><td>${(r.step_pct * 100).toFixed(2)}%</td><td>${r.sharpe.toFixed(2)}</td><td>${pc(r.return)}</td><td>${pc(r.mdd)}</td><td>${r.trades}</td></tr>`;
-  const head = "<tr><th>dl</th><th>dh</th><th>n</th><th>mode</th><th>bước%</th><th>Sharpe</th><th>Return</th><th>MDD</th><th>Giao dịch</th></tr>";
-  $("sweep").innerHTML = have.map((s, i) => {
-    const w = D.sweep[s];
-    return `<h2 style="font-size:15px;margin-top:18px"><span class="tag" style="background:${COL[SYMS.indexOf(s)]};color:#fff">${s}</span> ${w.window} ngày · ${w.passed}/${w.combos} tổ hợp qua lọc</h2>
-      <div class="kpis">
-        <div class="kpi"><b>${w.bh.sharpe.toFixed(2)}</b><span>Sharpe B&amp;H cửa sổ (${pct(w.bh.return * 100)})</span></div>
-        <div class="kpi"><b>${w.top[0].sharpe.toFixed(2)}</b><span>Sharpe tốt nhất (in-sample)</span></div>
-        <div class="kpi"><b>${w.median.toFixed(2)}</b><span>Sharpe trung vị mọi tổ hợp</span></div>
-        <div class="kpi"><b>${w.beat.toFixed(0)}%</b><span>Tổ hợp có Sharpe &gt; B&amp;H</span></div>
-        <div class="kpi"><b>${w.topwide}/10</b><span>Top-10 có dh = ${(w.dhmax * 100).toFixed(0)}% (gần giữ coin)</span></div>
-      </div>
-      <div class="row"><div><b style="font-size:13px">Top 10</b><table>${head}${w.top.map(row).join("")}</table></div>
-      <div><b style="font-size:13px">Bottom 5</b><table>${head}${w.bottom.map(row).join("")}</table></div></div>
-      <p class="sub" style="margin-top:12px">Heatmap Sharpe theo dl × n (lát cắt dh = dl, max trên mode)</p><div id="sw-${s}" style="overflow:auto"></div>`;
-  }).join("");
-  have.forEach((s) => {
-    const w = D.sweep[s], mx = Math.max(...w.heat.flat().filter((v) => v != null).map(Math.abs), 1e-9);
-    let h = `<table class="heat"><tr><th>dl / n</th>${w.n.map((n) => `<th>${n}</th>`).join("")}</tr>`;
-    w.dl.forEach((d, i) => {
-      h += `<tr><th>${(d * 100).toFixed(2).replace(/\.?0+$/, "")}%</th>` + w.heat[i].map((v) => v == null ? `<td></td>` :
-        `<td style="background:color-mix(in srgb, var(${v >= 0 ? "--pos" : "--neg"}) ${Math.round(Math.min(1, Math.abs(v) / mx) * 62)}%, var(--surface))">${v.toFixed(1)}</td>`).join("") + "</tr>";
-    });
-    $("sw-" + s).innerHTML = h + "</table>";
-  });
 }
 
 function histCard(s, i) {
@@ -448,37 +483,34 @@ function histCard(s, i) {
   return `<div><h2 style="font-size:14px">${s}</h2>${svgEl(W, H, g)}</div>`;
 }
 
-const SC = { W: 340, H: 260, l: 40, r: 10, t: 8, b: 30 };
-function scX(r) { const xl = Math.min(...r.x), xh = Math.max(...r.x); return { xl, xh, f: (v) => SC.l + ((v - xl) / (xh - xl)) * (SC.W - SC.l - SC.r) }; }
-function scY(r) { const yh = Math.max(...r.y) * 1.05; return { yh, f: (v) => SC.t + (1 - v / yh) * (SC.H - SC.t - SC.b) }; }
-
-function scatterCard(s) {
-  const r = D.reg[s], n = r.x.length, { xl, xh, f: X } = scX(r), { yh, f: Y } = scY(r);
-  const cls = (k) => (r.er[k] <= D.erth ? "var(--muted)" : r.up[k] ? "var(--pos)" : "var(--neg)");
-  let g = "", range = 0, pts = "";
-  for (const v of niceTicks(0, yh, 4)) g += `<line class="gridline" x1="${SC.l}" x2="${SC.W - SC.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${SC.l - 5}" y="${Y(v) + 4}" text-anchor="end">${v}%</text>`;
-  for (const v of niceTicks(xl, xh, 5)) g += `<text x="${X(v)}" y="${SC.H - 14}" text-anchor="middle">${v}%</text>`;
-  g += `<line class="axisline" x1="${SC.l}" x2="${SC.W - SC.r}" y1="${Y(0)}" y2="${Y(0)}"/>`;
-  if (xl < 0 && xh > 0) g += `<line x1="${X(0)}" x2="${X(0)}" y1="${SC.t}" y2="${Y(0)}" style="stroke:var(--axis);stroke-dasharray:3 3"/>`;
-  g += `<text x="${SC.l + (SC.W - SC.l - SC.r) / 2}" y="${SC.H - 1}" text-anchor="middle">Lợi suất 30 ngày</text>`;
-  for (let k = 0; k < n; k += 1) {
-    if (r.er[k] <= D.erth) range += 1;
-    pts += `<circle cx="${X(r.x[k]).toFixed(1)}" cy="${Y(r.y[k]).toFixed(1)}" r="2.6" style="fill:${cls(k)};opacity:.75;stroke:var(--surface);stroke-width:.5"/>`;
+function regimeChart(root, s) {
+  const r = D.regime[s], W = Math.max(320, root.clientWidth), H = 280, m = { l: 48, r: 12, t: 12, b: 26 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
+  const n = r.t.length, t0 = r.t[0], t1 = r.t[n - 1];
+  const lim = Math.max(...r.r.map(Math.abs)) * 1.1, X = (t) => m.l + ((t - t0) / (t1 - t0)) * iw, Y = (v) => m.t + (1 - (v + lim) / (2 * lim)) * ih;
+  let g = "", last = -1e9;
+  for (const v of niceTicks(-lim, lim, 6)) g += `<line class="gridline" x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end">${v.toFixed(1)}%</text>`;
+  for (let i = 0; i < n; i += 1) {
+    const d = new Date(r.t[i]);
+    if (d.getUTCDate() === 1 && X(r.t[i]) - last > 60) { last = X(r.t[i]); g += `<text x="${X(r.t[i])}" y="${H - 8}" text-anchor="middle">${pad(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}</text><line class="axisline" x1="${X(r.t[i])}" x2="${X(r.t[i])}" y1="${m.t}" y2="${m.t + ih}" style="stroke:var(--grid)"/>`; }
   }
-  return `<div id="sc-${s}"><h2 style="font-size:14px">${s} <span class="tag">Range ${((range / n) * 100).toFixed(0)}% số ngày</span></h2>${svgEl(SC.W, SC.H, g + pts)}</div>`;
-}
-
-function scatterHover(s) {
-  const r = D.reg[s], svg = $("sc-" + s).querySelector("svg"), X = scX(r).f, Y = scY(r).f;
-  svg.addEventListener("mousemove", (e) => {
-    const b = svg.getBoundingClientRect(), px = ((e.clientX - b.left) / b.width) * SC.W, py = ((e.clientY - b.top) / b.height) * SC.H;
+  g += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(0)}" y2="${Y(0)}" style="stroke:var(--ink);stroke-width:1"/>`;
+  const order = r.r.map((v, i) => i).filter((i) => r.s[i]).sort((a, b) => Math.abs(r.r[b]) - Math.abs(r.r[a])), labelled = new Set(order.slice(0, 14));
+  let pts = "", txt = "";
+  for (let i = 0; i < n; i += 1) {
+    const col = r.s[i] ? "var(--neg)" : "var(--s1)";
+    pts += `<circle cx="${X(r.t[i]).toFixed(1)}" cy="${Y(r.r[i]).toFixed(1)}" r="3.2" style="fill:${col};opacity:.9"/>`;
+    if (labelled.has(i)) txt += `<text x="${X(r.t[i]).toFixed(1)}" y="${(Y(r.r[i]) + (r.r[i] >= 0 ? -8 : 15)).toFixed(1)}" text-anchor="middle" style="fill:var(--neg)">${r.r[i].toFixed(2)}%</text>`;
+  }
+  root.innerHTML = svgEl(W, H, g + pts + txt + `<rect x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent" id="rhit"/>`);
+  const svg = root.querySelector("svg");
+  svg.querySelector("#rhit").addEventListener("mousemove", (e) => {
+    const b = svg.getBoundingClientRect(), px = ((e.clientX - b.left) / b.width) * W, py = ((e.clientY - b.top) / b.height) * H;
     let best = -1, bd = 1e9;
-    r.x.forEach((v, k) => { const d = (X(v) - px) ** 2 + (Y(r.y[k]) - py) ** 2; if (d < bd) { bd = d; best = k; } });
-    if (bd > 400) return hideTip();
-    const lab = r.er[best] <= D.erth ? "Range" : r.up[best] ? "Trend lên" : "Trend xuống";
-    showTip(e, `<b>${fmtDate(r.t[best])} · ${lab}</b><div>Return 30d: ${pct(r.x[best])}</div><div>Vol 30d: ${r.y[best].toFixed(1)}%</div><div>ER: ${r.er[best].toFixed(2)}</div>`);
+    for (let i = 0; i < n; i += 1) { const d = (X(r.t[i]) - px) ** 2 + (Y(r.r[i]) - py) ** 2; if (d < bd) { bd = d; best = i; } }
+    if (bd > 500) return hideTip();
+    showTip(e, `<b>${fmtDate(r.t[best])} · ${r.s[best] ? "STRESS" : "NORMAL"}</b><div>Lợi suất ngày: ${pct(r.r[best], 2)}</div><div>Z-score: ${r.z[best].toFixed(2)}</div>`);
   });
-  svg.addEventListener("mouseleave", hideTip);
+  svg.querySelector("#rhit").addEventListener("mouseleave", hideTip);
 }
 
 function renderDist() {
@@ -486,9 +518,10 @@ function renderDist() {
   const S = D.dstat, f = (v, d = 2) => v.toFixed(d);
   $("dstat").innerHTML = `<table><tr><th>Cặp</th><th>Mean/ngày</th><th>Std/ngày</th><th>Skew</th><th>Excess kurt</th><th>Min</th><th>Max</th><th>Ngày &gt; 2σ</th><th>median |r15m|</th><th>|r15m| &gt; 0.1%</th><th>|r15m| &gt; 0.2%</th><th>|r15m| &gt; 0.4%</th></tr>` +
     SYMS.map((s) => `<tr><td>${s}</td><td>${f(S[s].mean)}%</td><td>${f(S[s].std)}%</td><td>${f(S[s].skew)}</td><td>${f(S[s].kurt)}</td><td>${f(S[s].min, 1)}%</td><td>${f(S[s].max, 1)}%</td><td>${f(S[s].tail2, 1)}%</td><td>${f(S[s].med15, 3)}%</td><td>${f(S[s].p15_01, 1)}%</td><td>${f(S[s].p15_02, 1)}%</td><td>${f(S[s].p15_04, 1)}%</td></tr>`).join("") + "</table>";
-  $("scatters").innerHTML = SYMS.map(scatterCard).join("");
-  SYMS.forEach(scatterHover);
-  $("reg-note").textContent = `Ngưỡng ER = ${D.erth} (random walk 30 ngày có ER ≈ 0.15). Grid cần phần lớn thời gian ở regime Range; khi một ticker ở lâu trong vùng trend, grid sẽ giữ coin đang giảm hoặc bán hết sớm.`;
+  $("regimes").innerHTML = SYMS.map((s, i) => `<h2 style="font-size:14px;margin-top:${i ? 14 : 0}px"><span class="tag" style="background:${COL[i]};color:#fff">${s}</span> <span class="tag">STRESS ${(D.regime[s].n_stress / D.regime[s].n * 100).toFixed(0)}% số ngày</span></h2><div id="rg-${s}"></div>`).join("");
+  SYMS.forEach((s) => regimeChart($("rg-" + s), s));
+  $("reg-sub").textContent = `Mỗi chấm là lợi suất của một ngày (đóng cửa so với hôm trước). STRESS (cam) là ngày lợi suất lệch quá ${D.stress_z} độ lệch chuẩn so với ${D.reg_win} ngày trước đó; NORMAL (xanh) là các ngày còn lại. Nhãn ghi giá trị của 14 ngày STRESS lớn nhất.`;
+  $("reg-note").textContent = "Cách đọc: các ngày STRESS tập trung theo cụm là lúc thị trường đổi chế độ; lưới dễ bị giá phá biên hoặc giữ coin giảm giá trong các cụm này.";
 }
 
 $("theme").onclick = () => {

@@ -190,7 +190,7 @@ def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, mi
                     continue
                 for mode in space["mode"]:
                     st = step_pct(low, high, n, mode)
-                    if st < 2 * fee * safety:
+                    if st < 2 * fee * safety:  # loại range hẹp + nhiều lưới: mọi lưới liền kề phải bù đủ phí khứ hồi
                         continue
                     eq, trades, turn = grid_sim(P, low, high, n, mode, fee)
                     if trades < min_trades:

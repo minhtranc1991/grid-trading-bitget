@@ -42,3 +42,11 @@ def test_max_grids_caps_n_in_walk_forward():
     sp = {"dl": [0.02, 0.05, 0.1], "dh": [0.02, 0.05, 0.1], "n": [4, 10, 20, 40], "mode": ["arithmetic", "geometric"]}
     f = g.walk_forward(_df(), "15m", "BTCUSDT", space=sp, with_dgt=False, max_grids=10)
     assert (f.n <= 10).all() and (f.f_n <= 10).all()
+
+
+def test_chosen_configs_respect_min_step():
+    # mọi cấu hình được chọn (đỉnh nhọn và phẳng) phải có bước nhỏ nhất >= 2·fee·hệ số an toàn: không có range hẹp + dày
+    fee = 0.001
+    f = g.walk_forward(_df(), "15m", "BTCUSDT", fee=fee, space=SPACE, with_dgt=False)
+    assert (f.step_pct >= 2 * fee * 2 - 1e-12).all()
+    assert (f.f_step_pct >= 2 * fee * 2 - 1e-12).all()

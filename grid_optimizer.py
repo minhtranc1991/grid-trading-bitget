@@ -458,16 +458,15 @@ def run_stats(symbol, tf, df, fee, train=90, test=30, step=30, window=90):
 
 def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "1h")):
     """Sharpe OOS trung vị (phẳng, đỉnh nhọn, B&H) theo phí (x0.5/1/2 ở 15m) và theo timeframe (phí 1x)."""
-    rows = []
-    cache = {}
+    rows, base = [], None
+    df15 = load_ohlcv(symbol, "15m", days)
     for m in fees:
-        df = cache.setdefault("15m", load_ohlcv(symbol, "15m", days))
-        s = wf_summary(walk_forward(df, "15m", symbol, fee * m, with_dgt=False))
+        s = wf_summary(walk_forward(df15, "15m", symbol, fee * m, with_dgt=False))
+        base = s if m == 1.0 else base
         rows.append({"kind": "fee", "label": f"{m:g}x ({fee * m:.4f})", **{k: s[k] for k in ("f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "f_pct_profit", "folds")}})
         log.info("SENS %s fee x%g: flat=%.2f peak=%.2f B&H=%.2f", symbol, m, s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
     for tf in tfs:
-        df = cache.get(tf) or load_ohlcv(symbol, tf, days)
-        s = wf_summary(walk_forward(df, tf, symbol, fee, with_dgt=False))
+        s = base if tf == "15m" and base else wf_summary(walk_forward(load_ohlcv(symbol, tf, days), tf, symbol, fee, with_dgt=False))
         rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "f_pct_profit", "folds")}})
         log.info("SENS %s tf %s: flat=%.2f peak=%.2f B&H=%.2f", symbol, tf, s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
     (Path(__file__).parent / "results" / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")

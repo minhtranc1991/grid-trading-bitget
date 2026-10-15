@@ -30,6 +30,10 @@ Cả 4 cặp (90 ngày): sweep ghi `results/sweep_{SYMBOL}.json` và `results/he
 **Walk-forward (STEP 5, OUT-OF-SAMPLE):** `walk_forward(df, tf, symbol, ...)` chọn tham số đỉnh in-sample trên 90 ngày train, áp tại giá đầu 30 ngày test, trượt 30 ngày (15 fold/cặp); so với B&H và lưới mặc định ±10%, n=20. Test chống rò rỉ: đổi giá từ ngày test trở đi thì tham số fold 0 không đổi.
 Kết quả (Sharpe trung vị OOS / B&H / lưới mặc định): BTC −2.00 / −0.32 / −0.69; ETH −1.06 / −0.13 / −1.25; PAXG −1.99 / −0.26 / −1.70; XAUT −1.65 / −0.13 / −1.50. Grid chọn từ train không vượt B&H ở cả 4 cặp; tỷ lệ fold lãi 27–40%. Chưa có bằng chứng edge; tham số đỉnh in-sample không giữ được ngoài mẫu (STEP 6 thử tham số phẳng).
 
+**Tham số phẳng (STEP 6):** `smooth_pick` làm mượt Sharpe bằng trung bình lân cận 3×3 trên (dl, dh) với cùng (n, mode), chỉ xét ô có ≥ 5 ô hợp lệ quanh nó; `stability` báo median/IQR của dl, dh, bước% qua fold và cờ UNSTABLE (ngưỡng `UNSTABLE_IQR`, cần hiệu chỉnh).
+So sánh Sharpe OOS trung vị, đỉnh nhọn vs phẳng: BTC −2.00 vs −1.42; ETH −1.06 vs −1.03; PAXG −1.99 vs −2.00; XAUT −1.65 vs −2.03; trung bình −1.68 vs −1.62.
+**Mặc định = phẳng** (`DEFAULT_PICK`): trung bình nhỉnh hơn và ít nhạy nhiễu, nhưng chênh lệch nằm trong nhiễu (thắng 2/4 cặp, 15 fold) và cả hai đều kém B&H, nên đây không phải bằng chứng edge. Cả 4 cặp, cả hai cách chọn, đều bị cờ UNSTABLE; dh median nằm ở biên trên của không gian tìm kiếm (BTC/ETH 50%/35%, vàng 8%), tức là bộ tối ưu luôn đẩy dh lên mức tối đa.
+
 **Hàm lõi:** `load_ohlcv`, `grid_equity` (equity chuẩn hóa, vốn đầu = 1), `grid_stats` (số giao dịch, turnover), `metrics`, `buy_and_hold`.
 
 **Lưu ý lý thuyết:** equity của grid chỉ phụ thuộc giá hiện tại và số line đã cắt, không phụ thuộc đường đi. Giá đi lên-xuống rồi về chỗ cũ thì equity gộp = 1, chỉ còn trừ phí. Lãi chỉ có khi giá kết thúc ở chỗ khác chỗ bắt đầu (drift/regime).
@@ -54,7 +58,7 @@ Kết quả (Sharpe trung vị OOS / B&H / lưới mặc định): BTC −2.00 /
 - [x] **STEP 3** Chỉ số: `metrics` (Sharpe annualized, return, MDD, số giao dịch, turnover) + `buy_and_hold`
 - [x] **STEP 4** Quét tham số trên một cửa sổ (`sweep`), lọc bước% ≥ 2·fee·hệ số, n ≤ giới hạn lưới, trades ≥ 20; heatmap `results/heatmap_BTC.png`. Ghi chú in-sample
 - [x] **STEP 5** Walk-forward: train 90d → test 30d, trượt 30d; `results/{symbol}_folds.csv`; test không rò rỉ
-- [ ] **STEP 6** Tham số "phẳng" (làm mượt Sharpe 3×3) vs đỉnh nhọn; báo cáo ổn định median/IQR, cờ UNSTABLE
+- [x] **STEP 6** Tham số "phẳng" (làm mượt Sharpe 3×3) vs đỉnh nhọn; báo cáo ổn định median/IQR, cờ UNSTABLE
 - [ ] **STEP 7** Baseline DGT (reset lưới khi phá biên) + bảng OOS B&H vs grid cố định vs tối ưu vs DGT
 - [ ] **STEP 8** Đánh giá thống kê: số tổ hợp đã thử, Deflated Sharpe / block bootstrap, độ nhạy phí (0.5×/1×/2×) và timeframe (5m/15m/1h)
 - [ ] **STEP 9** CLI đầy đủ + `results/summary.csv` + equity OOS vs B&H + README giới hạn; end-to-end < vài phút, pytest pass

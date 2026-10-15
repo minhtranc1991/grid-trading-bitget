@@ -228,6 +228,49 @@ DAY_MS = 86_400_000
 DEFAULT_GRID = {"dl": 0.10, "dh": 0.10, "n": 20, "mode": "arithmetic"}  # lưới mặc định để so sánh
 
 
+# --- STEP 6: tham số "phẳng" thay vì đỉnh nhọn ---
+UNSTABLE_IQR = {"range_ratio": 0.35, "step_ratio": 1.0}  # cần hiệu chỉnh: IQR/khoảng của dl,dh; IQR/median của step%
+# Kết quả walk-forward (xem README STEP 6): trung bình Sharpe OOS của "phẳng" -1.62 vs "đỉnh nhọn" -1.68 trên 4 cặp,
+# thắng 2/4 cặp, chênh lệch nằm trong nhiễu (15 fold). Chọn "phẳng" làm mặc định vì ít nhạy với nhiễu, không vì có edge.
+DEFAULT_PICK = "flat"
+MIN_NEIGHBORS = 5  # ô được chọn phải có >= 5 ô hợp lệ trong lân cận 3x3 (kể cả chính nó)
+
+
+def smooth_pick(res, space):
+    """Chọn dòng có Sharpe trung bình lân cận 3x3 trên (dl,dh) cao nhất (cùng n, mode); chỉ ô có >= MIN_NEIGHBORS ô hợp lệ."""
+    dls, dhs = list(space["dl"]), list(space["dh"])
+    best, best_score, fallback = None, -np.inf, (None, -1)
+    for (n, mode), g in res.groupby(["n", "mode"]):
+        A = np.full((len(dls), len(dhs)), np.nan)
+        for r in g.itertuples():
+            A[dls.index(r.dl), dhs.index(r.dh)] = r.sharpe
+        pad = np.pad(A, 1, constant_values=np.nan)
+        win = np.stack([pad[i:i + A.shape[0], j:j + A.shape[1]] for i in range(3) for j in range(3)])
+        cnt = (~np.isnan(win)).sum(0)
+        avg = np.where(cnt > 0, np.nansum(win, 0) / np.maximum(cnt, 1), np.nan)
+        for i, j in zip(*np.where(~np.isnan(A))):
+            row = g[(g.dl == dls[i]) & (g.dh == dhs[j])].iloc[0].copy()
+            row["smooth"] = avg[i, j]
+            if cnt[i, j] >= MIN_NEIGHBORS and avg[i, j] > best_score:
+                best, best_score = row, avg[i, j]
+            if cnt[i, j] > fallback[1] or (cnt[i, j] == fallback[1] and fallback[0] is not None and avg[i, j] > fallback[0]["smooth"]):
+                fallback = (row, cnt[i, j])
+    return best if best is not None else fallback[0]
+
+
+def stability(f, space, prefix=""):
+    """Median/IQR của dl, dh, step% qua các fold; cờ UNSTABLE nếu IQR vượt ngưỡng cấu hình."""
+    out, flag = {}, False
+    for c, rng in (("dl", max(space["dl"]) - min(space["dl"])), ("dh", max(space["dh"]) - min(space["dh"])), ("step_pct", None)):
+        v = f[prefix + c]
+        q1, med, q3 = v.quantile([0.25, 0.5, 0.75])
+        out[c + "_median"], out[c + "_iqr"] = float(med), float(q3 - q1)
+        ratio = (q3 - q1) / rng if rng else (q3 - q1) / med
+        flag |= ratio > (UNSTABLE_IQR["range_ratio"] if rng else UNSTABLE_IQR["step_ratio"])
+    out["unstable"] = bool(flag)
+    return out
+
+
 def _grid_oos(P, dl, dh, n, mode, fee, bpy):
     """Đặt lưới tại giá đầu của P (tham số tương đối) rồi đo hiệu suất trên P."""
     low, high = P[0] * (1 - dl), P[0] * (1 + dh)
@@ -255,7 +298,12 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=90, test_days=30, s
         oos = _grid_oos(te, best.dl, best.dh, int(best.n), best["mode"], fee, bpy)
         dfl = _grid_oos(te, **DEFAULT_GRID, fee=fee, bpy=bpy)
         bh = metrics(buy_and_hold(te), bpy)
-        rows.append({"fold": k, "train_last_ts": int(ts[i1 - 1]), "test_start": int(ts[i1]), "test_end": int(ts[i2 - 1]),
+        fl = smooth_pick(res, space)
+        foos = _grid_oos(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, bpy)
+        rows.append({"f_dl": fl.dl, "f_dh": fl.dh, "f_n": int(fl.n), "f_mode": fl["mode"], "f_step_pct": fl.step_pct,
+                     "f_is_sharpe": fl.sharpe, "f_smooth": fl.smooth, "f_oos_sharpe": foos["sharpe"], "f_oos_return": foos["return"],
+                     "f_oos_mdd": foos["mdd"], "f_oos_trades": foos["trades"],
+"fold": k, "train_last_ts": int(ts[i1 - 1]), "test_start": int(ts[i1]), "test_end": int(ts[i2 - 1]),
                      "dl": best.dl, "dh": best.dh, "n": int(best.n), "mode": best["mode"], "step_pct": best.step_pct,
                      "is_sharpe": best.sharpe, "oos_sharpe": oos["sharpe"], "oos_return": oos["return"], "oos_mdd": oos["mdd"],
                      "oos_trades": oos["trades"], "bh_sharpe": bh["sharpe"], "bh_return": bh["return"], "bh_mdd": bh["mdd"],
@@ -268,7 +316,10 @@ def wf_summary(f):
     return {"folds": len(f), "oos_sharpe_median": f.oos_sharpe.median(), "bh_sharpe_median": f.bh_sharpe.median(),
             "def_sharpe_median": f.def_sharpe.median(), "is_sharpe_median": f.is_sharpe.median(),
             "pct_profit": float((f.oos_return > 0).mean() * 100), "pct_beat_bh": float((f.oos_return > f.bh_return).mean() * 100),
-            "oos_return_median": f.oos_return.median(), "bh_return_median": f.bh_return.median()}
+            "oos_return_median": f.oos_return.median(), "bh_return_median": f.bh_return.median(),
+            "f_oos_sharpe_median": f.f_oos_sharpe.median(), "f_is_sharpe_median": f.f_is_sharpe.median(),
+            "f_pct_profit": float((f.f_oos_return > 0).mean() * 100), "f_pct_beat_bh": float((f.f_oos_return > f.bh_return).mean() * 100),
+            "f_oos_return_median": f.f_oos_return.median()}
 
 
 def run_wf(symbol, tf, df, train, test, step, fee):
@@ -278,6 +329,10 @@ def run_wf(symbol, tf, df, train, test, step, fee):
     out.parent.mkdir(exist_ok=True)
     f.to_csv(out, index=False)
     s = wf_summary(f)
+    sp = space_for(symbol)
+    st_p, st_f = stability(f, sp), stability(f, sp, "f_")
+    log.info("WF %s flat: OOS Sharpe median=%.2f (peak %.2f); %%fold lãi=%.0f%%; peak %s, flat %s", symbol, s["f_oos_sharpe_median"],
+             s["oos_sharpe_median"], s["f_pct_profit"], "UNSTABLE" if st_p["unstable"] else "stable", "UNSTABLE" if st_f["unstable"] else "stable")
     log.info("WF %s train=%dd test=%dd step=%dd: %d folds, %.1fs. OOS Sharpe median=%.2f (B&H %.2f, default %.2f, in-sample %.2f); "
              "%%fold lãi=%.0f%%, %%fold hơn B&H=%.0f%%", symbol, train, test, step, s["folds"], time.time() - t0, s["oos_sharpe_median"],
              s["bh_sharpe_median"], s["def_sharpe_median"], s["is_sharpe_median"], s["pct_profit"], s["pct_beat_bh"])

@@ -27,3 +27,26 @@ def test_sweep_filters_and_sorted():
 def test_space_for_gold_vs_crypto():
     assert max(g.space_for("PAXGUSDT")["dl"]) == 0.08
     assert max(g.space_for("BTCUSDT")["dl"]) == 0.50
+
+
+def test_smooth_pick_prefers_plateau_over_spike():
+    import pandas as pd
+
+    d = [0.01, 0.02, 0.03]
+    sh = {(i, j): 1.0 for i in range(3) for j in range(3)}
+    sh[(0, 0)], sh[(0, 1)], sh[(1, 0)] = 5.0, -3.0, -3.0  # đỉnh nhọn ở góc, hàng xóm tệ
+    res = pd.DataFrame([{"dl": d[i], "dh": d[j], "n": 10, "mode": "arithmetic", "step_pct": 0.01, "sharpe": v}
+                        for (i, j), v in sh.items()]).sort_values("sharpe", ascending=False)
+    space = {"dl": d, "dh": d}
+    assert res.iloc[0].dl == 0.01 and res.iloc[0].dh == 0.01  # đỉnh nhọn
+    pick = g.smooth_pick(res, space)
+    assert (pick.dl, pick.dh) == (0.02, 0.02)  # ô giữa: lân cận 3x3 đầy đủ
+
+
+def test_stability_flags_wide_iqr():
+    import pandas as pd
+
+    sp = {"dl": [0.01, 0.5], "dh": [0.01, 0.5]}
+    wide = pd.DataFrame({"dl": [0.01, 0.5, 0.01, 0.5], "dh": [0.25] * 4, "step_pct": [0.01] * 4})
+    tight = pd.DataFrame({"dl": [0.2] * 4, "dh": [0.25] * 4, "step_pct": [0.01] * 4})
+    assert g.stability(wide, sp)["unstable"] and not g.stability(tight, sp)["unstable"]

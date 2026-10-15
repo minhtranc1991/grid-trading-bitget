@@ -11,10 +11,10 @@ Backtest + walk-forward out-of-sample, chỉ dùng dữ liệu công khai, khôn
 
 ```
 pip install -r requirements.txt
-python grid_optimizer.py --symbols BTCUSDT ETHUSDT PAXGUSDT XAUTUSDT --tf 15m --days 540 --fee 0.001 --train 90 --test 30   # STEP 9: pipeline đầy đủ (~2 phút)
+python grid_optimizer.py --symbols BTCUSDT ETHUSDT PAXGUSDT XAUTUSDT --tf 15m --days 540 --fee 0.001 --train 28 --select 7 --test 7 --step 7 --jobs 8   # STEP 9: pipeline đầy đủ (~25 giây với 8 tiến trình)
 python grid_optimizer.py --sweep                          # STEP 4 cho cả 4 cặp, cửa sổ 90 ngày cuối
 python grid_optimizer.py --symbols BTCUSDT --sweep --window 90 --fee 0.001   # chỉ một cặp
-python grid_optimizer.py --walkforward                    # STEP 5: 4 cặp, train 90 / test 30 / step 30 -> results/{SYMBOL}_folds.csv
+python grid_optimizer.py --walkforward                    # STEP 5: IS 28 / OOS 7 / forward 7 / step 7 -> results/{SYMBOL}_folds.csv
 python grid_optimizer.py --stats                          # STEP 8: CI bootstrap + Deflated Sharpe -> results/stats_{SYMBOL}.json
 python grid_optimizer.py --sensitivity                    # STEP 8: độ nhạy phí x0.5/1/2 và timeframe 5m/15m/1h (chậm, ~10 phút, tải nến 5m/1h)
 python make_report.py                                     # cập nhật results/report.html
@@ -34,49 +34,70 @@ Kiểm chứng: test tính tay (lên-xuống qua k line; mỗi vòng 100.5→98.
 **Sweep (STEP 4, IN-SAMPLE):** `sweep(prices, space, fee)` quét dl, dh, n, mode theo `space_for(symbol)`; lọc bước% nhỏ nhất ≥ 2·fee·2, n ≤ `MAX_GRIDS` (cần xác minh), số lệnh khớp ≥ 20. Heatmap dl × n lấy lát cắt đối xứng dh = dl.
 90 ngày cuối, Sharpe top-1 in-sample vs B&H cùng cửa sổ: BTC 4.49 vs 3.21; ETH 4.23 vs 2.49; PAXG 3.64 vs 0.91; XAUT 3.64 vs 0.88. Đây là in-sample trên cửa sổ tăng giá, chưa dùng để kết luận. Ghi `results/sweep_{SYMBOL}.json`, `results/heatmap_{BTC,ETH,PAXG,XAUT}.png`.
 
-**Walk-forward (STEP 5, OUT-OF-SAMPLE):** `walk_forward(df, tf, symbol, ...)` chọn tham số trên 90 ngày train, áp tại giá đầu 30 ngày test, trượt 30 ngày (15 fold/cặp); so với B&H và lưới mặc định ±10%, n=20. Test chống rò rỉ: đổi giá từ ngày test trở đi thì tham số fold 0 không đổi.
+**IS / OOS / forward (STEP 5, rolling hàng tuần):** `walk_forward(df, tf, symbol, ...)`, mỗi fold trượt 1 tuần:
 
-**Tham số phẳng (STEP 6):** `smooth_pick` làm mượt Sharpe bằng trung bình lân cận 3×3 trên (dl, dh) với cùng (n, mode), chỉ xét ô có ≥ 5 ô hợp lệ quanh nó; `stability` báo median/IQR của dl, dh, bước% qua fold và cờ UNSTABLE (ngưỡng `UNSTABLE_IQR`, cần hiệu chỉnh).
-**Mặc định = phẳng** (`DEFAULT_PICK`): Sharpe OOS trung vị trung bình 1.79 so với 1.27 của đỉnh nhọn, thắng 3/4 cặp. Cả 4 cặp bị cờ UNSTABLE với phẳng; với đỉnh nhọn thì BTC ổn định, 3 cặp còn lại UNSTABLE.
+| Giai đoạn | Độ dài | Việc làm |
+|---|---|---|
+| IS | 4 tuần (`--train 28`) | sweep, tìm tham số tối ưu; lấy top 20 và tham số "phẳng" làm ứng viên |
+| OOS | 1 tuần kế tiếp (`--select 7`) | chấm lại các ứng viên, chọn **tham số ổn định** = ứng viên có `min(Sharpe IS, Sharpe OOS)` cao nhất (`stable_pick`) |
+| Forward | 1 tuần kế tiếp nữa (`--test 7`) | áp tham số tại giá đầu tuần và đo hiệu suất; chưa từng dùng để chọn nên là phép thử sạch |
+
+540 ngày dữ liệu cho **72 fold/cặp** (trước đây 15). So sánh trên cùng tuần forward: tham số ổn định, tham số phẳng, đỉnh nhọn (IS top-1), lưới mặc định ±10%/n=20, B&H, và DGT. Test chống rò rỉ: đổi giá từ tuần forward trở đi thì tham số fold 0 không đổi; đổi giá trong tuần OOS thì tham số ổn định có thể đổi còn đỉnh nhọn thì không.
+
+**Tham số phẳng (STEP 6):** `smooth_pick` làm mượt Sharpe bằng trung bình lân cận 3×3 trên (dl, dh) với cùng (n, mode), chỉ xét ô có ≥ 5 ô hợp lệ quanh nó; `stability` báo median/IQR của dl, dh, bước% qua fold và cờ UNSTABLE (ngưỡng `UNSTABLE_IQR`, cần hiệu chỉnh). `DEFAULT_PICK = "stable"`.
 
 **DGT (STEP 7):** `dgt_equity(prices, dl, dh, n, mode, fee)` dựng lại lưới quanh giá mới khi giá phá low/high, vốn mới = equity hiện tại; phá trên thì đang toàn tiền mặt, phá dưới thì đang giữ toàn coin; trả phí tái cân bằng mỗi lần reset. Khi không bao giờ phá biên, DGT trùng khít grid thường (có test).
 
-**Bảng OOS, Sharpe trung vị mỗi fold (annualized, 15 fold/cặp):**
+**Bảng forward, Sharpe trung vị mỗi tuần (annualized, 72 fold/cặp):**
 
 | Chiến lược | BTC | ETH | PAXG | XAUT |
 |---|---|---|---|---|
-| Buy & Hold | −0.32 | −0.13 | −0.26 | −0.13 |
-| Grid cố định mặc định (±10%, n=20) | 0.31 | 0.42 | 0.30 | 0.61 |
-| Grid tối ưu: đỉnh nhọn | 1.26 | 1.56 | 1.17 | 1.10 |
-| Grid tối ưu: phẳng | **1.66** | 1.43 | **2.08** | **1.99** |
-| DGT (tham số phẳng) | 0.92 | 0.98 | −1.32 | −1.55 |
-| DGT (lưới mặc định) | −1.25 | −1.05 | −1.17 | 0.04 |
+| Buy & Hold | −0.67 | 0.29 | 1.63 | 1.89 |
+| Grid cố định mặc định (±10%, n=20) | 0.31 | 1.22 | 2.10 | 2.17 |
+| Grid đỉnh nhọn (IS top-1) | 2.43 | 1.73 | 2.75 | 2.65 |
+| Grid phẳng | 2.15 | 2.13 | 3.31 | 3.24 |
+| **Grid ổn định (IS → OOS)** | **2.62** | 1.80 | 3.11 | 2.99 |
+| DGT (tham số ổn định) | −0.06 | 0.08 | 0.34 | 0.27 |
 
-Tỷ lệ fold lãi (phẳng / B&H): BTC 67% / 40%, ETH 73% / 47%, PAXG 60% / 40%, XAUT 67% / 40%. DGT thua grid cố định vì reset liên tục (trung vị 2–7 lần/fold) khóa vị thế ở giá phá biên và trả thêm phí.
+Sharpe IS của tham số ổn định 3.1–3.3 giảm còn 1.8–3.1 ở tuần forward (mức lạc quan của in-sample). Tỷ lệ tuần lãi (ổn định / B&H): BTC 61% / 47%, ETH 65% / 50%, PAXG 69% / 61%, XAUT 68% / 61%. Tham số ổn định không hơn phẳng ở ETH/PAXG/XAUT; chênh lệch nằm trong nhiễu. DGT thua grid cố định vì reset khóa vị thế ở giá phá biên và trả thêm phí.
 
-**Thống kê (STEP 8):** `block_bootstrap_sharpe` (khối 1 ngày, 2000 lần) cho CI 95% của Sharpe OOS gộp các fold; `deflated_sharpe` trả PSR(0) và DSR theo số tổ hợp thử (2200 crypto, 1408 vàng) và phương sai Sharpe giữa các thử nghiệm.
-Sharpe OOS gộp (grid phẳng) [CI 95%] vs B&H: BTC −0.37 [−2.02, 1.33] vs −0.48; ETH −0.44 [−2.02, 1.24] vs −0.24; PAXG −0.10 [−1.69, 1.52] vs +0.79; XAUT +0.06 [−1.45, 1.67] vs +0.81. CI của hiệu grid − B&H chứa 0 ở cả 4 cặp. PSR(0) 0.31–0.53; DSR 0.00–0.10.
-**Sharpe gộp (≈ 0) thấp hơn nhiều so với trung vị fold (1.4–2.1):** phần lớn fold lãi nhỏ nhưng vài fold lỗ lớn (phân phối lệch âm: trung bình return fold < trung vị, ví dụ ETH có fold −23%, khi giá phá biên dưới và lưới giữ coin giảm giá). Trung vị fold không phản ánh phần đuôi này.
-Độ nhạy (Sharpe OOS trung vị, phẳng): phí 0.5× / 1× / 2× → BTC 1.55 / 1.66 / 1.54; ETH 1.46 / 1.43 / 1.37; PAXG 2.24 / 2.08 / 0.98; XAUT 2.25 / 1.99 / 0.54 (vàng nhạy phí hơn crypto). Timeframe 5m / 15m / 1h → BTC 1.93 / 1.66 / 0.92; ETH 1.34 / 1.43 / 1.35; PAXG 1.03 / 2.08 / 2.25; XAUT 1.00 / 1.99 / 2.64. Không timeframe/phí nào đảo dấu kết luận; chênh lệch giữa các timeframe nằm trong nhiễu với 15 fold.
+**Thống kê (STEP 8):** `block_bootstrap_sharpe` (khối 1 ngày, 2000 lần) cho CI 95% của Sharpe OOS gộp các tuần forward; `deflated_sharpe` trả PSR(0) và DSR theo số tổ hợp thử (2200 crypto, 1408 vàng) và phương sai Sharpe giữa các thử nghiệm.
+Sharpe gộp (tham số ổn định) [CI 95%] vs B&H: BTC −0.66 [−2.31, 1.01] vs −0.34; ETH +0.12 [−1.50, 1.86] vs +0.23; PAXG −0.14 [−1.55, 1.31] vs +0.73; XAUT −0.26 [−1.72, 1.23] vs +0.74. CI của hiệu grid − B&H chứa 0 ở cả 4 cặp (vàng sát biên: [−2.85, 0.25] và [−2.99, 0.20]). PSR(0) 0.22–0.56; DSR 0.00–0.07.
+**Sharpe gộp (≈ 0) thấp hơn nhiều so với trung vị tuần (1.8–3.1):** đa số tuần lãi nhỏ (return trung vị +0.1%) nhưng vài tuần lỗ lớn (thấp nhất −7% đến −8%); phân phối lệch âm nên trung vị không phản ánh phần đuôi.
+Độ nhạy (Sharpe forward trung vị, tham số ổn định):
 
-**Tóm tắt cuối (STEP 9, `results/summary.csv`)**: walk-forward 90/30/30, phí 0.1%, 15 fold/cặp, grid phẳng.
+| Cấu hình | BTC | ETH | PAXG | XAUT |
+|---|---|---|---|---|
+| Phí 0.5× | 2.99 | 2.01 | 3.73 | 3.26 |
+| Phí 1× | 2.62 | 1.80 | 3.11 | 2.99 |
+| Phí 2× | 2.01 | 1.35 | 1.25 (60 fold) | 1.42 (61 fold) |
+| 5m | 3.44 | 2.54 | 2.85 | 2.97 |
+| 15m | 2.62 | 1.80 | 3.11 | 2.99 |
+| 1h | 1.78 | 1.31 | 1.77 | 1.50 |
 
-| Cặp | Sharpe OOS gộp [CI 95%] | Return OOS gộp | B&H | MDD OOS | MDD B&H | Fold lãi | Khuyến nghị dl/dh/n/bước%/mode | Cờ |
+Phí cao làm giảm ở mọi cặp, mạnh nhất ở vàng (phí 2× đòi bước ≥ 0.8% nên 11–12 tuần không còn tổ hợp nào qua bộ lọc và bị bỏ qua). Nến thưa hơn làm giảm Sharpe ở crypto (5m > 15m > 1h), phù hợp với việc dùng giá close bỏ sót các lần cắt line trong nến. Không cấu hình nào đảo kết luận chung.
+
+**Tóm tắt cuối (STEP 9, `results/summary.csv`)**: IS 28d / OOS 7d / forward 7d, phí 0.1%, 72 fold/cặp, tham số ổn định.
+
+| Cặp | Sharpe gộp [CI 95%] | Return gộp | B&H | MDD | MDD B&H | Tuần lãi | Khuyến nghị dl / dh / n / bước% / mode | Cờ |
 |---|---|---|---|---|---|---|---|---|
-| BTC | −0.37 [−2.02, 1.33] | −11.7% | −30.6% | −30.9% | −54.5% | 67% | 5% / 50% / 15 / 2.44% / arithmetic | UNSTABLE |
-| ETH | −0.44 [−2.02, 1.24] | −24.0% | −34.0% | −49.3% | −69.9% | 73% | 35% / 50% / 20 / 2.83% / arithmetic | UNSTABLE |
-| PAXG | −0.10 [−1.69, 1.52] | −3.9% | +24.1% | −19.2% | −29.5% | 60% | 3% / 8% / 8 / 1.35% / geometric | UNSTABLE |
-| XAUT | +0.06 [−1.45, 1.67] | −0.4% | +24.3% | −18.3% | −29.3% | 67% | 2% / 5% / 6 / 1.16% / geometric | UNSTABLE |
+| BTC | −0.66 [−2.31, 1.01] | −17.8% | −26.9% | −34.0% | −55.7% | 61% | 5% / 8% / 8 / 1.62% / geometric | UNSTABLE |
+| ETH | +0.12 [−1.50, 1.86] | −1.2% | −6.0% | −36.3% | −71.4% | 65% | 25% / 5% / 20 / 1.70% / geometric | UNSTABLE |
+| PAXG | −0.14 [−1.55, 1.31] | −4.6% | +23.9% | −20.7% | −30.8% | 69% | 8% / 0.25% / 8 / 1.08% / geometric | UNSTABLE |
+| XAUT | −0.26 [−1.72, 1.23] | −6.5% | +23.6% | −19.5% | −30.5% | 68% | 8% / 0.25% / 8 / 1.08% / geometric | UNSTABLE |
 
 **Kết luận (trên lõi đã sửa):**
-- Grid **giảm drawdown rõ rệt** (MDD OOS thấp hơn B&H ở cả 4 cặp) và **lãi ở đa số fold** (60–73% so với 40–47% của B&H), vì nó giữ ít coin hơn khi giá giảm.
+- Grid **giảm drawdown rõ rệt** (MDD forward thấp hơn B&H ở cả 4 cặp) và **lãi ở đa số tuần** (61–69% so với 47–61% của B&H).
 - Trong giai đoạn thị trường giảm (BTC/ETH) grid lỗ ít hơn B&H; trong giai đoạn vàng tăng (+24%) grid **thua B&H nhiều** vì bán sớm khi giá lên.
-- **Chưa có bằng chứng thống kê về edge:** CI 95% của Sharpe OOS gộp chứa 0 ở cả 4 cặp và CI của hiệu so với B&H cũng chứa 0; DSR thấp. Với 15 fold và một giai đoạn thị trường, không thể phân biệt edge thật với may mắn.
-- Tham số khuyến nghị chỉ để thử nghiệm: cờ UNSTABLE, tham số đổi nhiều giữa các fold.
+- **Chưa có bằng chứng thống kê về edge:** CI 95% của Sharpe gộp chứa 0 ở cả 4 cặp, CI của hiệu so với B&H cũng chứa 0; DSR thấp.
+- **Range bị tối ưu lệch rất mạnh:** `dh` trung vị chỉ 1.3–2% trong khi `dl` 5–25% (khuyến nghị vàng là `dh` = 0.25%, giá trị nhỏ nhất của không gian tìm kiếm). Lưới chủ yếu mua khi giá giảm và bán nhanh khi giá nhích lên, nên bỏ lỡ đà tăng. Bộ lọc bước chưa chặn kiểu range này (chưa có ràng buộc độ rộng/dh tối thiểu).
+- Tham số khuyến nghị chỉ để thử nghiệm: cờ UNSTABLE, tham số đổi nhiều giữa các tuần.
 
 **Trần số lưới:** `--max-grids N` (mặc định `MAX_GRIDS = 100`, cần xác minh trong app Bitget) lọc `n ≤ N` ở mọi bước (sweep, walk-forward, stats, pipeline cuối). Không gian tìm kiếm quét `n ∈ {4, 6, 8, 10, 15, 20, 30, 40, 60, 80, 100}`; `n` khuyến nghị hiện là 6–20, nên trần 100 không phải ràng buộc đang cắn.
 
-**Hàm lõi:** `load_ohlcv`, `grid_sim` / `grid_equity` / `grid_stats`, `metrics`, `buy_and_hold`, `sweep`, `walk_forward`, `dgt_equity`, `block_bootstrap_sharpe`, `deflated_sharpe`.
+**Hàm lõi:** `load_ohlcv`, `grid_sim` / `grid_equity` / `grid_stats`, `metrics`, `buy_and_hold`, `sweep`, `smooth_pick`, `stable_pick`, `walk_forward`, `dgt_equity`, `block_bootstrap_sharpe`, `deflated_sharpe`.
+
+**Chạy song song:** các fold độc lập nên `walk_forward` chạy bằng `ProcessPoolExecutor` (`--jobs N`, mặc định `min(8, số lõi)`, tối đa 8; `--jobs 1` chạy tuần tự). Kết quả y hệt tuần tự (có test). Walk-forward 72 fold của một cặp: 66 giây → 8 giây, trong đó phần lớn tăng tốc đến từ việc viết lại `smooth_pick` bằng NumPy (23.6 giây trên 1 tiến trình).
 
 **B&H 15m (2025-04-21 → 2026-10-15):** BTC Sharpe 0.07 / −8.2% / MDD −53.8%; ETH 0.71 / +44.5% / −69.3%; PAXG 0.61 / +20.2% / −29.7%; XAUT 0.62 / +20.1% / −29.4%.
 
@@ -97,7 +118,7 @@ Sharpe OOS gộp (grid phẳng) [CI 95%] vs B&H: BTC −0.37 [−2.02, 1.33] vs 
 - [x] **STEP 2** Grid backtest lõi `grid_sim` (slot ghép cặp, theo sự kiện cắt line) + test: equity[0]=1, giá đứng yên, lãi mỗi vòng = 1 bước, tính tay, khớp mô phỏng sổ lệnh limit độc lập (đã sửa sau lỗi mô hình)
 - [x] **STEP 3** Chỉ số: `metrics` (Sharpe annualized, return, MDD, số giao dịch, turnover) + `buy_and_hold`
 - [x] **STEP 4** Quét tham số trên một cửa sổ (`sweep`), lọc bước% ≥ 2·fee·hệ số, n ≤ giới hạn lưới, trades ≥ 20; heatmap `results/heatmap_BTC.png`. Ghi chú in-sample
-- [x] **STEP 5** Walk-forward: train 90d → test 30d, trượt 30d; `results/{symbol}_folds.csv`; test không rò rỉ
+- [x] **STEP 5** Walk-forward: IS 28d tìm tham số tối ưu → OOS 7d chọn tham số ổn định → forward 7d đo hiệu suất, trượt 7d (72 fold); `results/{symbol}_folds.csv`; test không rò rỉ
 - [x] **STEP 6** Tham số "phẳng" (làm mượt Sharpe 3×3) vs đỉnh nhọn; báo cáo ổn định median/IQR, cờ UNSTABLE
 - [x] **STEP 7** Baseline DGT (reset lưới khi phá biên) + bảng OOS B&H vs grid cố định vs tối ưu vs DGT
 - [x] **STEP 8** Đánh giá thống kê: số tổ hợp đã thử, Deflated Sharpe / block bootstrap, độ nhạy phí (0.5×/1×/2×) và timeframe (5m/15m/1h)

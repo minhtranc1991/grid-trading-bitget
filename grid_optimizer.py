@@ -79,20 +79,53 @@ def load_ohlcv(symbol, tf="15m", days=540):
     return df
 
 
+def _cross(P, low, high, n, mode):
+    lines = (np.linspace if mode == "arithmetic" else np.geomspace)(low, high, n + 1)
+    return lines, np.searchsorted(lines, P, side="right")  # c = số line <= giá
+
+
 def grid_equity(prices, low, high, n, mode="arithmetic", fee=0.0):
     """Equity chuẩn hóa (vốn đầu = 1) của grid n khoảng giữa low..high; fee = tỷ lệ mỗi chiều.
     Equity là hàm của (giá, số line đã cắt) nên không phụ thuộc đường đi, đúng với Chen et al."""
     P = np.asarray(prices, float)
-    space = np.linspace if mode == "arithmetic" else np.geomspace
-    lines = space(low, high, n + 1)
+    lines, c = _cross(P, low, high, n, mode)
     m = n + 1
-    c = np.searchsorted(lines, P, side="right")
     S = np.concatenate(([0.0], np.cumsum(lines)))
     c0 = c[0]
     Gv = 1.0 / ((m - c0) * P[0] + S[c0])
     Sc = S[c]
     fees = np.cumsum(fee * Gv * np.abs(np.diff(Sc, prepend=Sc[0])))
     return Gv * Sc + Gv * (m - c) * P - fees
+
+
+def grid_stats(prices, low, high, n, mode="arithmetic"):
+    """(số giao dịch = tổng |Δc|, turnover = tổng notional giao dịch / vốn đầu)."""
+    P = np.asarray(prices, float)
+    lines, c = _cross(P, low, high, n, mode)
+    S = np.concatenate(([0.0], np.cumsum(lines)))
+    c0 = c[0]
+    Gv = 1.0 / ((n + 1 - c0) * P[0] + S[c0])
+    return int(np.abs(np.diff(c)).sum()), float(Gv * np.abs(np.diff(S[c])).sum())
+
+
+BARS_PER_YEAR = {"1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520, "1h": 8760, "4h": 2190}  # crypto 24/7
+
+
+def metrics(equity, bars_per_year, trades=0, turnover=0.0):
+    eq = np.asarray(equity, float)
+    r = np.diff(eq) / eq[:-1]
+    sd = r.std(ddof=1)
+    return {
+        "sharpe": float(r.mean() / sd * np.sqrt(bars_per_year)) if sd > 0 else 0.0,
+        "return": float(eq[-1] / eq[0] - 1),
+        "mdd": float((eq / np.maximum.accumulate(eq) - 1).min()),
+        "trades": trades,
+        "turnover": turnover,
+    }
+
+
+def buy_and_hold(prices):
+    return np.asarray(prices, float) / prices[0]
 
 
 def report(symbol, tf, df):
@@ -113,7 +146,10 @@ def main():
                         handlers=[logging.StreamHandler(), logging.FileHandler(LOG_PATH, encoding="utf-8")])
     log.info("RUN args=%s", vars(a))
     for s in a.symbols:
-        report(s, a.tf, load_ohlcv(s, a.tf, a.days))
+        df = load_ohlcv(s, a.tf, a.days)
+        report(s, a.tf, df)
+        m = metrics(buy_and_hold(df.close.values), BARS_PER_YEAR[a.tf])
+        log.info("%s B&H: sharpe=%.2f return=%+.1f%% mdd=%.1f%%", s, m["sharpe"], 100 * m["return"], 100 * m["mdd"])
 
 
 if __name__ == "__main__":

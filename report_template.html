@@ -152,7 +152,13 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>13. Lịch sử chạy (results/run.log)</h2>
+    <h2>13. STEP 9: Tóm tắt cuối và equity OOS</h2>
+    <p class="sub">Kết quả từ <code>python grid_optimizer.py</code> (walk-forward 90/30/30, phí 0.1%). Tham số khuyến nghị chọn bằng cách "phẳng" trên 90 ngày cuối, tương đối theo giá hiện tại.</p>
+    <div id="final"></div>
+  </section>
+
+  <section class="card">
+    <h2>14. Lịch sử chạy (results/run.log)</h2>
     <div id="runs"></div>
     <details><summary>Log gốc</summary><pre id="rawlog"></pre></details>
   </section>
@@ -372,12 +378,29 @@ function renderStats() {
     labels.map((l) => `<tr><td>${name(l)}</td>` + sh.map((s) => { const r = D.sens[s].find((q) => q.kind + ":" + q.label === l); return r ? `<td>${r.f_oos_sharpe_median.toFixed(2)} / ${r.oos_sharpe_median.toFixed(2)} / ${r.bh_sharpe_median.toFixed(2)}</td>` : "<td>–</td>"; }).join("") + "</tr>").join("") + "</table>";
 }
 
+function renderFinal() {
+  if (!D.summary) { $("final").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py</code> rồi <code>python make_report.py</code>.</p>`; return; }
+  const pc = (v, d = 1) => (v * 100).toFixed(d) + "%";
+  $("final").innerHTML = `<table><tr><th>Cặp</th><th>Sharpe OOS gộp [CI 95%]</th><th>Sharpe median fold</th><th>Return OOS</th><th>B&amp;H</th><th>MDD OOS</th><th>Fold lãi</th><th>Khuyến nghị dl / dh / n / bước% / mode</th><th>Ổn định</th><th>Kết luận</th></tr>` +
+    D.summary.map((r) => `<tr><td>${r.symbol}</td><td>${r.oos_sharpe_pooled.toFixed(2)} [${r.sharpe_ci_lo.toFixed(2)}, ${r.sharpe_ci_hi.toFixed(2)}]</td><td>${r.oos_sharpe_median.toFixed(2)}</td><td>${pc(r.oos_return)}</td><td>${pc(r.bh_return)}</td><td>${pc(r.oos_mdd)}</td><td>${r.pct_fold_profit.toFixed(0)}%</td><td>${pc(r.rec_dl)} / ${pc(r.rec_dh)} / ${r.rec_n} / ${pc(r.rec_step_pct, 2)} / ${r.rec_mode}</td><td>${r.unstable}</td><td style="text-align:left">${r.edge}</td></tr>`).join("") + `</table>
+    <p class="note">Tham số khuyến nghị chỉ để thử nghiệm: cả 4 cặp đều UNSTABLE, dh chạm biên trên của không gian tìm kiếm (lưới gần như giữ coin), và không có bằng chứng edge so với B&amp;H.</p>
+    <div class="row2" id="oos-eq"></div>`;
+  const items = Object.entries(D.oos_eq || {}).map(([s, v], i) => {
+    const el = document.createElement("div"), c = document.createElement("div");
+    el.innerHTML = `<h2 style="font-size:14px">${s}</h2><div class="legend"><span><i style="background:${COL[i]}"></i>Grid OOS</span><span><i style="background:var(--muted)"></i>Buy &amp; Hold</span></div>`;
+    el.appendChild(c); $("oos-eq").appendChild(el);
+    return [c, s, v, i];
+  });
+  items.forEach(([c, s, v, i]) => lineChart(c, { x: v.t, series: [{ name: s, color: COL[i], y: v.grid }, { name: "B&H", color: "var(--muted)", y: v.bh }], fmt: (x, t) => x.toFixed(t ? 3 : 2), h: 240, ref: 1 }));
+}
+
 function renderSteps() {
   const done = D.progress.filter((p) => p.done).length;
   $("progress").innerHTML = `<p class="sub">${done}/${D.progress.length} step hoàn thành</p><table>` +
     D.progress.map((p) => `<tr><td style="width:28px">${p.done ? "✔" : "○"}</td><td style="text-align:left"><b>STEP ${p.n}</b> ${p.text.replace(/\*\*/g, "")}</td></tr>`).join("") + "</table>";
   renderWF();
   renderStats();
+  renderFinal();
   const have = SYMS.filter((s) => D.sweep[s]);
   if (!have.length) { $("sweep").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy: <code>python grid_optimizer.py --sweep</code> rồi <code>python make_report.py</code>.</p>`; return; }
   const pc = (v) => (v * 100).toFixed(1) + "%", row = (r) => `<tr><td>${pc(r.dl)}</td><td>${pc(r.dh)}</td><td>${r.n}</td><td>${r.mode}</td><td>${(r.step_pct * 100).toFixed(2)}%</td><td>${r.sharpe.toFixed(2)}</td><td>${pc(r.return)}</td><td>${pc(r.mdd)}</td><td>${r.trades}</td></tr>`;

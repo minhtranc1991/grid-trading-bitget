@@ -141,7 +141,7 @@ def build():
         "td": ms(vol.index), "vol": {s: r4(vol[s]) for s in SYMS},
         "months": months, "mret": {s: r4(mret[s] * 100) for s in SYMS},
         "corr": ret.corr().round(3).values.tolist(),
-        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "wf": {s: load_wf(s) for s in SYMS}, "stats": {s: load_json(f"stats_{s}.json") for s in SYMS}, "sens": {s: load_json(f"sens_{s}.json") for s in SYMS}, "progress": progress(), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
+        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "wf": {s: load_wf(s) for s in SYMS}, "stats": {s: load_json(f"stats_{s}.json") for s in SYMS}, "sens": {s: load_json(f"sens_{s}.json") for s in SYMS}, "summary": (pd.read_csv(g.LOG_PATH.parent / "summary.csv").to_dict("records") if (g.LOG_PATH.parent / "summary.csv").exists() else None), "oos_eq": load_json("oos_equity.json"), "progress": progress(), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
         "rawlog": g.LOG_PATH.read_text(encoding="utf-8"),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }

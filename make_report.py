@@ -29,6 +29,8 @@ def parse_log(text):
             runs.append(cur)
         elif cur is not None:
             sym = msg.split(" ")[0]
+            if sym not in SYMS:
+                continue
             d = cur["syms"].setdefault(sym, {"t0": prev})
             if (m := re.search(r"cache (\d+) -> (\d+) bars, fetched (\d+)", msg)):
                 d.update(cache_before=int(m[1]), cache_after=int(m[2]), fetched=int(m[3]))

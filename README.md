@@ -67,6 +67,8 @@ Sharpe OOS gộp (grid phẳng) [CI 95%] vs B&H: BTC −1.28 [−2.98, 0.31] vs 
 
 **Kết luận: chưa có bằng chứng edge** cho grid spot trên cả 4 cặp trong giai đoạn 2025-04 → 2026-10. Equity OOS nối các fold nằm dưới B&H, và đi ngang từng đoạn dài (lưới bị giá phá biên, đứng yên toàn coin hoặc toàn tiền mặt). Tham số khuyến nghị chỉ để thử nghiệm: tất cả đều UNSTABLE và `dh` chạm biên trên của không gian tìm kiếm (lưới gần như giữ coin). Khuyến nghị được chọn bằng cách "phẳng" trên 90 ngày cuối, tương đối theo giá hiện tại (`rec_low`/`rec_high` trong summary.csv là mức giá tuyệt đối tương ứng).
 
+**Trần số lưới:** `--max-grids N` (mặc định `MAX_GRIDS = 100`, cần xác minh trong app Bitget) lọc `n ≤ N` ở mọi bước (sweep, walk-forward, stats, pipeline cuối). Không gian tìm kiếm quét `n ∈ {4, 6, 8, 10, 15, 20, 30, 40, 60, 80, 100}`; `n` khuyến nghị hiện là 4–10, nên trần 100 không phải ràng buộc đang cắn.
+
 **Hàm lõi:** `load_ohlcv`, `grid_equity` (equity chuẩn hóa, vốn đầu = 1), `grid_stats` (số giao dịch, turnover), `metrics`, `buy_and_hold`.
 
 **Lưu ý lý thuyết:** equity của grid chỉ phụ thuộc giá hiện tại và số line đã cắt, không phụ thuộc đường đi. Giá đi lên-xuống rồi về chỗ cũ thì equity gộp = 1, chỉ còn trừ phí. Lãi chỉ có khi giá kết thúc ở chỗ khác chỗ bắt đầu (drift/regime).

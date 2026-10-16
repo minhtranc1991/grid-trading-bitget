@@ -86,8 +86,13 @@ def _lines(low, high, n, mode):
     return (np.linspace if mode == "arithmetic" else np.geomspace)(low, high, n + 1)
 
 
-def grid_sim(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
-    """Mô phỏng lưới thật theo SỰ KIỆN cắt line. Trả (equity chuẩn hóa vốn=1, số lệnh khớp sau lúc vào, turnover).
+def grid_sim_x(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
+    """Mô phỏng lưới thật theo SỰ KIỆN cắt line. Trả (equity chuẩn hóa vốn=1, số lệnh khớp sau lúc vào, turnover, extra).
+
+    extra tách lợi nhuận làm hai phần (chuẩn hóa theo vốn):
+      grid_profit = tổng lãi các chu kỳ KHÉP KÍN do lưới tự mua ở L_k rồi bán ở L_{k+1}, đã trừ phí hai chiều (lợi nhuận chênh lệch giá);
+      inv_pnl     = phần còn lại = biến động giá của vị thế chưa ghép (coin mua lúc vào, coin đang giữ), kể cả phí vào lệnh;
+      grid_profit + inv_pnl = lợi suất tổng. cycles = số chu kỳ khép kín.
 
     n slot; slot k mua ở L_k, bán ở L_{k+1} (mỗi slot 1 đơn vị coin). Lúc bắt đầu: slot có line bán nằm trên giá đầu
     giữ coin (mua tại P0), các slot còn lại dự trữ tiền L_k để mua. Giá cắt lên L_j: slot j-1 bán nếu đang giữ;
@@ -107,12 +112,18 @@ def grid_sim(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
     dcash = np.zeros(len(P))
     dcoin = np.zeros(len(P))
     trades, notional = 0, coins0 * p0
+    paired = [False] * n  # slot đang giữ coin do CHÍNH lưới mua (đã có chân mua để ghép); coin lúc vào thì chưa ghép
+    gp, cycles = 0.0, 0
     for b in ev.tolist():
         d, c0 = int(dc[b]), int(c[b])
         if d > 0:  # cắt lên line c0..c0+d-1 (tăng dần): slot j-1 bán tại L_j
             for j in range(c0, c0 + d):
                 if j >= 1 and hold[j - 1]:
                     hold[j - 1] = False
+                    if paired[j - 1]:  # chu kỳ khép kín: mua L_{j-1}, bán L_j
+                        gp += Ll[j] * (1 - fee) - Ll[j - 1] * (1 + fee)
+                        cycles += 1
+                        paired[j - 1] = False
                     dcash[b + 1] += Ll[j] * (1 - fee)
                     dcoin[b + 1] -= 1
                     trades += 1
@@ -121,6 +132,7 @@ def grid_sim(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
             for j in range(c0 - 1, c0 + d - 1, -1):
                 if j <= n - 1 and not hold[j]:
                     hold[j] = True
+                    paired[j] = True
                     dcash[b + 1] -= Ll[j] * (1 + fee)
                     dcoin[b + 1] += 1
                     trades += 1
@@ -128,7 +140,13 @@ def grid_sim(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
     eq = (cash0 + np.cumsum(dcash) + (coins0 + np.cumsum(dcoin)) * P) / cap
     if entry_fee:
         eq[1:] -= fee * coins0 * p0 / cap  # phí mua coin lúc vào lưới
-    return eq, trades, float(notional / cap)
+    gpn = gp / cap
+    return eq, trades, float(notional / cap), {"grid_profit": gpn, "cycles": cycles, "inv_pnl": float(eq[-1] - 1 - gpn)}
+
+
+def grid_sim(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
+    """(equity, số lệnh khớp, turnover); xem grid_sim_x để có phần tách lợi nhuận lưới/vị thế."""
+    return grid_sim_x(prices, low, high, n, mode, fee, entry_fee)[:3]
 
 
 def grid_equity(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
@@ -143,11 +161,11 @@ def grid_stats(prices, low, high, n, mode="arithmetic"):
 BARS_PER_YEAR = {"1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520, "1h": 8760, "4h": 2190}  # crypto 24/7
 
 
-OBJECTIVE = "return"  # chỉ số được TỐI ƯU: return (lợi suất thuần, quy về tuần) | sharpe | sortino | calmar; còn lại chỉ để tham khảo
-OBJECTIVES = ("return", "sharpe", "sortino", "calmar")
+OBJECTIVE = "grid"  # chỉ số được TỐI ƯU: grid (lợi nhuận lưới = các chu kỳ mua-bán khép kín, quy về tuần) | return (lợi suất tổng) | sharpe | sortino | calmar
+OBJECTIVES = ("grid", "return", "sharpe", "sortino", "calmar")
 
 
-def metrics(equity, bars_per_year, trades=0, turnover=0.0):
+def metrics(equity, bars_per_year, trades=0, turnover=0.0, extra=None):
     """return = lợi suất cả cửa sổ; ret_wk = lợi suất quy về một tuần (return · bars_mỗi_tuần / số bar), để so các cửa sổ dài ngắn khác nhau;
     sortino = mean / độ lệch xuống · √bars_năm; calmar = lợi suất quy năm / |MDD|."""
     eq = np.asarray(equity, float)
@@ -157,7 +175,14 @@ def metrics(equity, bars_per_year, trades=0, turnover=0.0):
     ret = float(eq[-1] / eq[0] - 1)
     mdd = float((eq / np.maximum.accumulate(eq) - 1).min())
     nb = max(len(r), 1)
+    wk = (bars_per_year / 52) / nb  # hệ số quy về tuần
+    days = nb * 365 / bars_per_year
+    nan = float("nan")
+    gp = extra["grid_profit"] if extra else nan
     return {
+        "grid": gp, "grid_wk": gp * wk, "inv": ret - gp, "inv_wk": (ret - gp) * wk,
+        "cycles": extra["cycles"] if extra else nan, "cycles_day": (extra["cycles"] / days) if extra else nan,
+        "fills_day": trades / days,
         "sharpe": float(r.mean() / sd * np.sqrt(bars_per_year)) if sd > 0 else 0.0,
         "sortino": float(r.mean() / dd * np.sqrt(bars_per_year)) if dd > 0 else 0.0,
         "return": ret,
@@ -172,7 +197,7 @@ def metrics(equity, bars_per_year, trades=0, turnover=0.0):
 def objective_value(m, objective=None):
     """Giá trị của chỉ số đang tối ưu trong dict metrics."""
     obj = OBJECTIVE if objective is None else objective
-    return m["ret_wk"] if obj == "return" else m[obj]
+    return m["ret_wk"] if obj == "return" else m["grid_wk"] if obj == "grid" else m[obj]
 
 
 def buy_and_hold(prices):
@@ -214,12 +239,12 @@ def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, mi
                     st = step_pct(low, high, n, mode)
                     if st < 2 * fee * safety:  # loại range hẹp + nhiều lưới: mọi lưới liền kề phải bù đủ phí khứ hồi
                         continue
-                    eq, trades, turn = grid_sim(P, low, high, n, mode, fee)
+                    eq, trades, turn, ex = grid_sim_x(P, low, high, n, mode, fee)
                     if trades < min_trades:
                         continue
-                    m = metrics(eq, bars_per_year, trades, turn)
+                    m = metrics(eq, bars_per_year, trades, turn, ex)
                     rows.append({"dl": dl, "dh": dh, "n": n, "mode": mode, "step_pct": st, **m, "score": objective_value(m, objective)})
-    cols = ["dl", "dh", "n", "mode", "step_pct", "score", "return", "ret_wk", "sharpe", "sortino", "calmar", "mdd", "trades", "turnover"]
+    cols = ["dl", "dh", "n", "mode", "step_pct", "score", "return", "ret_wk", "grid_wk", "inv_wk", "cycles_day", "sharpe", "sortino", "calmar", "mdd", "trades", "turnover"]
     return pd.DataFrame(rows, columns=cols).sort_values("score", ascending=False).reset_index(drop=True)
 
 
@@ -372,8 +397,8 @@ def stability(f, space, prefix=""):
 def _grid_oos(P, dl, dh, n, mode, fee, bpy):
     """Đặt lưới tại giá đầu của P (tham số tương đối) rồi đo hiệu suất trên P."""
     low, high = P[0] * (1 - dl), P[0] * (1 + dh)
-    eq, trades, turn = grid_sim(P, low, high, n, mode, fee)
-    return metrics(eq, bpy, trades, turn)
+    eq, trades, turn, ex = grid_sim_x(P, low, high, n, mode, fee)
+    return metrics(eq, bpy, trades, turn, ex)
 
 
 SELECT_DAYS = 7  # độ dài cửa sổ OOS dùng để tìm tham số ổn định (chỉnh bằng --select)
@@ -438,11 +463,13 @@ def _wf_fold(t):
         deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
         dm2 = metrics(deq2, bpy)
     else:
-        dm = dm2 = {k_: np.nan for k_ in ("sharpe", "sortino", "calmar", "ret_wk", "return", "mdd")}
+        dm = dm2 = {k_: np.nan for k_ in ("sharpe", "sortino", "calmar", "ret_wk", "return", "mdd", "grid_wk", "inv_wk", "cycles_day")}
         dres = dres2 = np.nan
     ex = {}
     for p, m_ in (("oos", oos), ("f_oos", foos), ("s_oos", soos), ("def", dfl), ("bh", bh), ("dgt", dm), ("dgtdef", dm2)):
-        ex.update({p + "_sortino": m_["sortino"], p + "_calmar": m_["calmar"], p + "_retwk": m_["ret_wk"]})
+        ex.update({p + "_sortino": m_["sortino"], p + "_calmar": m_["calmar"], p + "_retwk": m_["ret_wk"],
+                   p + "_gridwk": m_["grid_wk"], p + "_invwk": m_["inv_wk"], p + "_cycday": m_["cycles_day"]})
+    ex["bh_gridwk"], ex["bh_invwk"], ex["bh_cycday"] = 0.0, bh["ret_wk"], 0.0  # giữ coin: toàn bộ là vị thế
     is_first, is_last, sel_last, t_start, t_end = ts_bounds
     return k, {
         "fold": k, "is_start": is_first, "is_last_ts": is_last, "train_last_ts": sel_last, "test_start": t_start, "test_end": t_end,
@@ -518,7 +545,9 @@ def wf_summary(f):
             "dgt_pct_beat_bh": float((f.dgt_return > f.bh_return).mean() * 100), "dgt_resets_median": med("dgt_resets"),
             "dgtdef_sharpe_median": med("dgtdef_sharpe"), "dgtdef_return_median": med("dgtdef_return"),
             **{f"{b}_{k}_median": (med(f"{b}_{k}") if f"{b}_{k}" in f else float("nan"))
-               for b in ("bh", "def", "oos", "f_oos", "s_oos", "dgt", "dgtdef") for k in ("retwk", "sortino", "calmar")}}
+               for b in ("bh", "def", "oos", "f_oos", "s_oos", "dgt", "dgtdef") for k in ("retwk", "sortino", "calmar")},
+            **{f"{b}_{k}_{a}": (float(getattr(f[f"{b}_{k}"], a)()) if f"{b}_{k}" in f else float("nan"))
+               for b in ("bh", "def", "oos", "f_oos", "s_oos") for k in ("gridwk", "invwk", "cycday", "retwk") for a in ("median", "mean")}}
 
 
 def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
@@ -531,6 +560,8 @@ def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
     sp = space_for(symbol)
     st = stability(f, sp, "s_")
     log.info("WF %s IS=%dd OOS-select=%dd forward=%dd step=%dd: %d fold, %.1fs", symbol, train, SELECT_DAYS, test, step, s["folds"], time.time() - t0)
+    log.info("WF %s tách lợi nhuận/tuần (TB, ổn định): lưới=%+.3f%% vị thế=%+.3f%% tổng=%+.3f%% | B&H=%+.3f%% | chu kỳ/ngày median=%.2f", symbol,
+             100 * s["s_oos_gridwk_mean"], 100 * s["s_oos_invwk_mean"], 100 * s["s_oos_retwk_mean"], 100 * s["bh_retwk_mean"], s["s_oos_cycday_median"])
     log.info("WF %s mục tiêu=%s | return/tuần median: stable=%+.2f%% flat=%+.2f%% peak=%+.2f%% default=%+.2f%% B&H=%+.2f%%", symbol, OBJECTIVE,
              100 * s["s_oos_retwk_median"], 100 * s["f_oos_retwk_median"], 100 * s["oos_retwk_median"], 100 * s["def_retwk_median"], 100 * s["bh_retwk_median"])
     log.info("WF %s Sharpe median (forward): stable=%.2f flat=%.2f peak=%.2f default=%.2f B&H=%.2f DGT=%.2f; %%fold lãi stable=%.0f%% (B&H %.0f%%), "
@@ -659,6 +690,9 @@ def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRID
     row = {"symbol": symbol, "tf": tf, "fee": fee, "folds": len(f), "oos_sharpe_median": f[pre + "oos_sharpe"].median(),
            "oos_sharpe_pooled": pt, "sharpe_ci_lo": lo, "sharpe_ci_hi": hi, "oos_return": mg["return"], "oos_mdd": mg["mdd"],
            "oos_sortino": mg["sortino"], "oos_calmar": mg["calmar"], "bh_sortino": mb["sortino"], "bh_calmar": mb["calmar"], "objective": OBJECTIVE,
+           "grid_wk_mean": float(f[pre + "oos_gridwk"].mean()), "inv_wk_mean": float(f[pre + "oos_invwk"].mean()),
+           "tot_wk_mean": float(f[pre + "oos_retwk"].mean()), "bh_wk_mean": float(f["bh_retwk"].mean()),
+           "cycles_day_median": float(f[pre + "oos_cycday"].median()), "grid_wk_median": float(f[pre + "oos_gridwk"].median()),
            "pct_fold_profit": float((f[pre + "oos_return"] > 0).mean() * 100), "bh_sharpe_pooled": mb["sharpe"],
            "bh_return": mb["return"], "bh_mdd": mb["mdd"], "rec_dl": rec.dl, "rec_dh": rec.dh, "rec_n": int(rec.n),
            "rec_step_pct": rec.step_pct, "rec_mode": rec["mode"], "rec_low": last * (1 - rec.dl), "rec_high": last * (1 + rec.dh),

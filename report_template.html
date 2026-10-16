@@ -137,7 +137,7 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
 
   <section class="card">
     <h2>10. Tối ưu và walk-forward (tóm tắt)</h2>
-    <p class="sub">So sánh các cách chọn tham số trên cùng các tuần forward. Sharpe là trung vị của từng tuần (quy ra năm); % tuần lãi là tỷ lệ tuần forward có lợi suất dương.</p>
+    <p class="sub"><b>Chỉ số được tối ưu: lợi suất thuần</b> (quy về một tuần). Sharpe, Sortino và Calmar chỉ để tham khảo thêm góc nhìn rủi ro. Mọi số là trung vị của từng tuần forward.</p>
     <div id="wf"></div>
   </section>
 
@@ -339,22 +339,33 @@ function foldSchedule() {
 function renderWF() {
   const have = SYMS.filter((s) => D.wf[s]);
   if (!have.length) { $("wf").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py</code>.</p>`; return; }
-  const rows = [["Buy &amp; Hold", "bh_sharpe_median", "bh_pct_profit"], ["Grid mặc định (±10%, n=20)", "def_sharpe_median", "def_pct_profit"],
-    ["Grid đỉnh nhọn (chỉ IS)", "oos_sharpe_median", "pct_profit"], ["Grid phẳng", "f_oos_sharpe_median", "f_pct_profit"],
-    ["<b>Grid ổn định (IS → OOS)</b>", "s_oos_sharpe_median", "s_pct_profit"], ["DGT (tham số ổn định)", "dgt_sharpe_median", "dgt_pct_profit"]];
-  const best = {};
-  have.forEach((s) => { best[s] = Math.max(...rows.slice(1).map((r) => D.wf[s].sum[r[1]])); });
-  $("wf").innerHTML = `<table><tr><th rowspan="2">Chiến lược</th>${have.map((s) => `<th colspan="2" style="text-align:center">${s.replace("USDT", "")}</th>`).join("")}</tr>
-    <tr>${have.map(() => "<th>Sharpe</th><th>% tuần lãi</th>").join("")}</tr>` +
-    rows.map((r, k) => `<tr><td>${r[0]}</td>` + have.map((s) => { const S = D.wf[s].sum, v = S[r[1]];
-      return `<td${k > 0 && v === best[s] ? ' style="font-weight:700"' : ""}>${v.toFixed(2)}</td><td>${S[r[2]].toFixed(0)}%</td>`; }).join("") + "</tr>").join("") + "</table>" +
-    `<p class="note">In đậm = Sharpe cao nhất trong các cách chọn grid. Số fold: ${have.map((s) => `${s.replace("USDT", "")} ${D.wf[s].sum.folds}`).join(", ")}.</p>`;
+  const rows = [["Buy &amp; Hold", "bh_sharpe_median"], ["Grid mặc định (±10%, n=20)", "def_sharpe_median"],
+    ["Grid đỉnh nhọn (chỉ IS)", "oos_sharpe_median"], ["Grid phẳng", "f_oos_sharpe_median"],
+    ["<b>Grid ổn định (IS → OOS)</b>", "s_oos_sharpe_median"], ["DGT (tham số ổn định)", "dgt_sharpe_median"]];
+  const metric = (title, key, fmt, note) => {
+    const best = {};
+    have.forEach((s) => { best[s] = Math.max(...rows.slice(1).map((r) => D.wf[s].sum[r[1].replace("%K", key)])); });
+    return `<div><h2 style="font-size:14px">${title}</h2><table><tr><th>Chiến lược</th>${have.map((s) => `<th>${s.replace("USDT", "")}</th>`).join("")}</tr>` +
+      rows.map((r, k) => `<tr><td>${r[0]}</td>` + have.map((s) => { const v = D.wf[s].sum[r[1].replace("%K", key)];
+        return `<td${k > 0 && v === best[s] ? ' style="font-weight:700"' : ""}>${fmt(v)}</td>`; }).join("") + "</tr>").join("") + `</table><p class="note">${note}</p></div>`;
+  };
+  const rows2 = rows.map((r) => [r[0], r[1].replace("sharpe_median", "%K_median")]);
+  rows.length = 0; rows2.forEach((r) => rows.push(r));
+  $("wf").innerHTML = `<div class="row2">` +
+    metric("Lợi suất mỗi tuần (mục tiêu tối ưu)", "retwk", (v) => (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%", "Trung vị lợi suất của một tuần forward.") +
+    metric("Sharpe (tham khảo)", "sharpe", (v) => v.toFixed(2), "Lợi suất trên độ lệch chuẩn, quy ra năm.") +
+    metric("Sortino (tham khảo)", "sortino", (v) => v.toFixed(2), "Như Sharpe nhưng chỉ phạt dao động giảm.") +
+    metric("Calmar (tham khảo)", "calmar", (v) => v.toFixed(1), "Lợi suất quy năm chia cho mức sụt tối đa trong tuần; tuần ngắn nên con số lớn, chỉ dùng để so sánh tương đối.") +
+    `</div><p class="note">In đậm = giá trị cao nhất trong các cách chọn grid (không tính B&amp;H). Số fold: ${have.map((s) => `${s.replace("USDT", "")} ${D.wf[s].sum.folds}`).join(", ")}.</p>` +
+    `<h2 style="font-size:14px;margin-top:16px">Tỷ lệ tuần forward có lãi</h2><table><tr><th>Chiến lược</th>${have.map((s) => `<th>${s.replace("USDT", "")}</th>`).join("")}</tr>` +
+    [["Buy &amp; Hold", "bh_pct_profit"], ["Grid mặc định", "def_pct_profit"], ["Grid đỉnh nhọn", "pct_profit"], ["Grid phẳng", "f_pct_profit"], ["<b>Grid ổn định</b>", "s_pct_profit"], ["DGT", "dgt_pct_profit"]]
+      .map((r) => `<tr><td>${r[0]}</td>` + have.map((s) => `<td>${D.wf[s].sum[r[1]].toFixed(0)}%</td>`).join("") + "</tr>").join("") + "</table>";
   const sw = SYMS.filter((s) => D.sweep[s]);
   let html = "";
   if (sw.length) {
     html += `<h2 style="font-size:15px;margin-top:20px">Tham khảo: sweep in-sample trên ${D.sweep[sw[0]].window} ngày cuối</h2>
-      <table><tr><th>Cặp</th><th>Tổ hợp qua lọc</th><th>Sharpe tốt nhất (in-sample)</th><th>Sharpe B&amp;H cùng cửa sổ</th><th>% tổ hợp hơn B&amp;H</th></tr>` +
-      sw.map((s) => { const w = D.sweep[s]; return `<tr><td>${s}</td><td>${w.passed}/${w.combos}</td><td>${w.top[0].sharpe.toFixed(2)}</td><td>${w.bh.sharpe.toFixed(2)}</td><td>${w.beat.toFixed(0)}%</td></tr>`; }).join("") +
+      <table><tr><th>Cặp</th><th>Tổ hợp qua lọc</th><th>Lợi suất tổ hợp tốt nhất</th><th>Sharpe của nó</th><th>Lợi suất B&amp;H cùng cửa sổ</th><th>% tổ hợp hơn B&amp;H (lợi suất)</th></tr>` +
+      sw.map((s) => { const w = D.sweep[s]; return `<tr><td>${s}</td><td>${w.passed}/${w.combos}</td><td>${pcs(w.top[0]["return"])}</td><td>${w.top[0].sharpe.toFixed(2)}</td><td>${pcs(w.bh["return"])}</td><td>${w.beat.toFixed(0)}%</td></tr>`; }).join("") +
       `</table><p class="note">Đây là in-sample trên một cửa sổ nên chỉ để tham khảo; không dùng để kết luận. Kết luận dựa trên bảng forward ở trên.</p>`;
   }
   html += have.map((s) => {
@@ -391,6 +402,7 @@ function renderStats() {
       <li><b>Sharpe</b>: lợi suất trên mỗi đơn vị dao động, quy ra năm. Càng cao càng tốt, trên 0 là có lãi sau khi cân rủi ro.</li>
       <li><b>Khoảng tin cậy 95%</b> (thanh màu): kết quả "thật" có khả năng nằm trong khoảng này. <b>Nếu thanh chứa vạch 0 thì chưa thể kết luận</b> là có lợi thế, vì kết quả có thể chỉ do may rủi.</li>
       <li><b>Hiệu grid − B&amp;H</b>: nếu thanh nằm hoàn toàn bên trái vạch 0 thì grid kém giữ coin có ý nghĩa; bên phải thì tốt hơn; chứa 0 thì chưa phân biệt được.</li>
+      <li>Tối ưu theo <b>lợi suất thuần</b>, nhưng kiểm định thống kê dưới đây dùng Sharpe vì Sharpe có công thức khoảng tin cậy chuẩn.</li>
       <li><b>PSR</b>: xác suất Sharpe thật &gt; 0. <b>DSR</b>: như PSR nhưng trừ đi việc ta đã thử hàng nghìn tổ hợp và chọn cái đẹp nhất; cần &gt; 0.95 mới đáng tin.</li>
     </ul></div>`;
   const have = SYMS.filter((s) => D.stats[s]);
@@ -410,12 +422,16 @@ function renderStats() {
   if (!sh.length) { $("sens").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py --sensitivity</code> (chậm, tải thêm nến 5m/1h).</p>`; return; }
   const labels = [...new Set(sh.flatMap((s) => D.sens[s].map((r) => r.kind + ":" + r.label)))];
   const name = (l) => (l.startsWith("fee:") ? "Phí " + l.slice(4) : "Khung nến " + l.slice(3));
-  const all = sh.flatMap((s) => D.sens[s].map((r) => r.s_oos_sharpe_median)), mx = Math.max(...all.map(Math.abs), 1e-9);
-  $("sens").innerHTML = `<p class="sub">Sharpe forward trung vị của grid ổn định khi đổi phí giao dịch (15m) hoặc khung nến (phí 0.1%). Ô đậm hơn = Sharpe cao hơn. Hàng "Phí 1×" và "Khung nến 15m" là cấu hình gốc.</p>
-    <table class="heat"><tr><th>Cấu hình</th>${sh.map((s) => `<th>${s.replace("USDT", "")}</th>`).join("")}</tr>` +
-    labels.map((l) => `<tr><th style="text-align:left">${name(l)}</th>` + sh.map((s) => { const r = D.sens[s].find((q) => q.kind + ":" + q.label === l); if (!r) return "<td></td>"; const v = r.s_oos_sharpe_median;
-      return `<td style="background:color-mix(in srgb, var(--pos) ${Math.round(Math.min(1, Math.abs(v) / mx) * 62)}%, var(--surface))" title="Phẳng ${r.f_oos_sharpe_median.toFixed(2)} · nhọn ${r.oos_sharpe_median.toFixed(2)} · B&H ${r.bh_sharpe_median.toFixed(2)} · ${r.folds} fold">${v.toFixed(2)}</td>`; }).join("") + "</tr>").join("") + "</table>" +
-    `<p class="note">Cách đọc: phí tăng gấp đôi làm Sharpe giảm ở mọi cặp, mạnh nhất ở vàng vì bước lưới của vàng nhỏ. Khung nến thưa hơn làm Sharpe thấp hơn ở crypto, vì mô phỏng chỉ thấy giá đóng cửa nên bỏ sót các lần chạm vạch trong nến. Chênh lệch nhỏ giữa các ô nằm trong nhiễu.</p>`;
+  const heatTable = (title, key, fmt, note) => {
+    const all = sh.flatMap((s) => D.sens[s].map((r) => r[key] ?? 0)), mx = Math.max(...all.map(Math.abs), 1e-9);
+    return `<div><h2 style="font-size:14px">${title}</h2><table class="heat"><tr><th>Cấu hình</th>${sh.map((s) => `<th>${s.replace("USDT", "")}</th>`).join("")}</tr>` +
+      labels.map((l) => `<tr><th style="text-align:left">${name(l)}</th>` + sh.map((s) => { const r = D.sens[s].find((q) => q.kind + ":" + q.label === l); if (!r || r[key] == null) return "<td></td>"; const v = r[key];
+        return `<td style="background:color-mix(in srgb, var(${v >= 0 ? "--pos" : "--neg"}) ${Math.round(Math.min(1, Math.abs(v) / mx) * 62)}%, var(--surface))" title="${r.folds} fold">${fmt(v)}</td>`; }).join("") + "</tr>").join("") + `</table><p class="note">${note}</p></div>`;
+  };
+  $("sens").innerHTML = `<p class="sub">Kết quả của grid ổn định khi đổi phí giao dịch (nến 15m) hoặc khung nến (phí 0.1%). Dòng "Phí 1×" và "Khung nến 15m" là cấu hình gốc.</p><div class="row2">` +
+    heatTable("Lợi suất mỗi tuần, trung vị (mục tiêu)", "s_oos_retwk_median", (v) => (v >= 0 ? "+" : "") + (v * 100).toFixed(2) + "%", "Ô xanh là có lãi, ô cam là lỗ; đậm hơn = lớn hơn.") +
+    heatTable("Sharpe, trung vị (tham khảo)", "s_oos_sharpe_median", (v) => v.toFixed(2), "Cùng cấu hình, nhìn theo rủi ro.") + `</div>
+    <p class="note">Cách đọc: phí tăng gấp đôi làm kết quả giảm ở mọi cặp, mạnh nhất ở vàng vì bước lưới của vàng nhỏ. Khung nến thưa hơn làm kết quả thấp hơn ở crypto, vì mô phỏng chỉ thấy giá đóng cửa nên bỏ sót các lần chạm vạch trong nến. Chênh lệch nhỏ giữa các ô nằm trong nhiễu.</p>`;
 }
 
 function verdict(r, w) {
@@ -446,10 +462,10 @@ function renderFinal() {
         <div>${r.rec_n} lưới, bước ${pcs(r.rec_step_pct, 2)}, kiểu ${r.rec_mode}</div>
         <ul><li class="warnli">${r.unstable === "UNSTABLE" ? "Tham số đổi nhiều giữa các tuần (UNSTABLE): chỉ nên dùng làm điểm khởi đầu." : "Tham số tương đối ổn định giữa các tuần."}</li>${narrow}</ul></div></div>`;
   }).join("");
-  $("final").innerHTML = `<p class="sub">Kết quả của <code>python grid_optimizer.py</code>: mỗi tuần dùng tham số chọn từ 4 tuần IS + 1 tuần OOS, rồi nối các tuần forward lại. Phí 0.1% mỗi chiều.</p>
+  $("final").innerHTML = `<p class="sub">Kết quả của <code>python grid_optimizer.py</code>: mỗi tuần dùng tham số chọn từ 4 tuần IS + 1 tuần OOS theo <b>lợi suất thuần</b>, rồi nối các tuần forward lại. Phí 0.1% mỗi chiều. Sharpe, Sortino, Calmar chỉ để tham khảo.</p>
     <div class="row2">${cards}</div>
-    <table style="margin-top:16px"><tr><th>Cặp</th><th>Return grid</th><th>Return B&amp;H</th><th>MDD grid</th><th>MDD B&amp;H</th><th>Sharpe gộp [CI 95%]</th><th>Sharpe trung vị tuần</th><th>Tuần lãi</th></tr>` +
-    D.summary.map((r) => `<tr><td>${r.symbol}</td><td>${pcs(r.oos_return)}</td><td>${pcs(r.bh_return)}</td><td>${pcs(r.oos_mdd)}</td><td>${pcs(r.bh_mdd)}</td><td>${r.oos_sharpe_pooled.toFixed(2)} [${r.sharpe_ci_lo.toFixed(2)}, ${r.sharpe_ci_hi.toFixed(2)}]</td><td>${r.oos_sharpe_median.toFixed(2)}</td><td>${r.pct_fold_profit.toFixed(0)}%</td></tr>`).join("") + `</table>
+    <table style="margin-top:16px"><tr><th>Cặp</th><th>Return grid</th><th>Return B&amp;H</th><th>MDD grid</th><th>MDD B&amp;H</th><th>Sharpe gộp [CI 95%]</th><th>Sortino grid / B&amp;H</th><th>Calmar grid / B&amp;H</th><th>Tuần lãi</th></tr>` +
+    D.summary.map((r) => `<tr><td>${r.symbol}</td><td>${pcs(r.oos_return)}</td><td>${pcs(r.bh_return)}</td><td>${pcs(r.oos_mdd)}</td><td>${pcs(r.bh_mdd)}</td><td>${r.oos_sharpe_pooled.toFixed(2)} [${r.sharpe_ci_lo.toFixed(2)}, ${r.sharpe_ci_hi.toFixed(2)}]</td><td>${(r.oos_sortino ?? NaN).toFixed(2)} / ${(r.bh_sortino ?? NaN).toFixed(2)}</td><td>${(r.oos_calmar ?? NaN).toFixed(1)} / ${(r.bh_calmar ?? NaN).toFixed(1)}</td><td>${r.pct_fold_profit.toFixed(0)}%</td></tr>`).join("") + `</table>
     <p class="note"><b>Vì sao Sharpe trung vị tuần (2 đến 3) cao hơn Sharpe gộp (gần 0)?</b> Đa số tuần lãi nhỏ nên trung vị đẹp, nhưng vài tuần lỗ lớn kéo kết quả gộp xuống. Trung vị không phản ánh phần đuôi này, nên kết luận dựa trên Sharpe gộp và khoảng tin cậy.</p>
     <h2 style="font-size:16px;margin-top:20px">Equity nối các tuần forward so với giữ coin (vốn đầu = 1)</h2>
     <div class="row2" id="oos-eq"></div>

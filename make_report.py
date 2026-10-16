@@ -17,33 +17,35 @@ OUT = Path(__file__).parent / "results" / "report.html"
 TEMPLATE = Path(__file__).parent / "report_template.html"
 
 
+LOG_LINE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3}) (?:\[(\d+)\] )?(.*)$")
+
+
 def parse_log(text):
-    runs, prev, cur = [], None, None
+    """Tách theo PID nên hai lần chạy chồng nhau không lẫn dòng; log cũ (không có PID) coi là một luồng duy nhất.
+    elapsed = từ dòng log liền trước (cùng PID) tới dòng B&H của cặp đó, tức là thời gian nạp/cache dữ liệu của cặp."""
+    runs, cur, prev = [], {}, {}
     for line in text.splitlines():
-        if len(line) < 25:
+        mt = LOG_LINE.match(line)
+        if not mt:
             continue
-        t = datetime.strptime(line[:23], "%Y-%m-%d %H:%M:%S,%f")
-        msg = line[24:]
+        t, pid, msg = datetime.strptime(mt[1], "%Y-%m-%d %H:%M:%S,%f"), mt[2] or "-", mt[3]
         if msg.startswith("RUN"):
-            cur = {"t": t.strftime("%Y-%m-%d %H:%M:%S"), "args": msg[9:], "syms": {}}
-            runs.append(cur)
-        elif cur is not None:
+            cur[pid] = {"t": t.strftime("%Y-%m-%d %H:%M:%S"), "args": msg[9:], "pid": None if pid == "-" else int(pid), "syms": {}}
+            runs.append(cur[pid])
+        elif pid in cur:
             sym = msg.split(" ")[0]
-            if sym not in SYMS:
-                continue
-            d = cur["syms"].setdefault(sym, {"t0": prev})
-            if (m := re.search(r"cache (\d+) -> (\d+) bars, fetched (\d+)", msg)):
-                d.update(cache_before=int(m[1]), cache_after=int(m[2]), fetched=int(m[3]))
-            elif (m := re.search(r": (\d+) bars, (.+) -> (.+), gap=(\d+)", msg)):
-                d.update(bars=int(m[1]), start=m[2], end=m[3], gap=int(m[4]))
-            elif "B&H" in msg:
-                d["elapsed"] = round((t - d["t0"]).total_seconds(), 2)
-            d["t_last"] = t
-        prev = t
+            if sym in SYMS:
+                d = cur[pid]["syms"].setdefault(sym, {"t0": prev.get(pid, t)})
+                if (m := re.search(r"cache (\d+) -> (\d+) bars, fetched (\d+)", msg)):
+                    d.update(cache_before=int(m[1]), cache_after=int(m[2]), fetched=int(m[3]))
+                elif (m := re.search(r": (\d+) bars, (.+) -> (.+), gap=(\d+)", msg)):
+                    d.update(bars=int(m[1]), start=m[2], end=m[3], gap=int(m[4]))
+                elif "B&H" in msg:
+                    d["elapsed"] = round((t - d["t0"]).total_seconds(), 2)
+        prev[pid] = t
     for r in runs:
         for d in r["syms"].values():
             d.pop("t0", None)
-            d.pop("t_last", None)
     return runs
 
 
@@ -78,18 +80,36 @@ def load_json(name):
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
 
-def progress():
-    txt = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
-    return [{"done": d == "x", "n": int(n), "text": t.strip()} for d, n, t in re.findall(r"- \[( |x)\] \*\*STEP (\d+)\*\* (.+)", txt)]
+ATR_N, REG_WIN, STRESS_Z = 14, 30, 1.5  # ATR(14) daily; STRESS khi |z| > 1.5 so với 30 ngày trước
+
+
+def fold_schedule():
+    """Lịch fold thực tế lấy từ results/{SYMBOL}_folds.csv của cặp đầu tiên có dữ liệu."""
+    bar = g.BAR_MS[TF]
+    for s in SYMS:
+        p = g.LOG_PATH.parent / f"{s}_folds.csv"
+        if not p.exists():
+            continue
+        f = pd.read_csv(p)
+        if "is_start" not in f:  # file cũ: suy từ is_last_ts với IS mặc định
+            f["is_start"] = f.is_last_ts - g.DAY_MS * 28 + bar
+        day = lambda x: round(float(x) / g.DAY_MS, 1)
+        r0 = f.iloc[0]
+        cfg = {"is_days": day(r0.is_last_ts - r0.is_start + bar), "sel_days": day(r0.train_last_ts - r0.is_last_ts),
+               "fwd_days": day(r0.test_end - r0.test_start + bar),
+               "step_days": day(f.test_start.diff().dropna().median()) if len(f) > 1 else 0}
+        cols = ["is_start", "is_last_ts", "train_last_ts", "test_start", "test_end"]
+        return {"symbol": s, "cfg": cfg, "n": int(len(f)), "folds": f[cols].astype("int64").values.tolist()}
+    return None
 
 
 def build():
-    close = {}
+    close, high, low = {}, {}, {}
     for s in SYMS:
         df = pd.read_csv(g.DATA_DIR / f"{s}_{TF}.csv")
         df.index = pd.to_datetime(df.ts, unit="ms")
-        close[s] = df.close
-    C = pd.DataFrame(close)
+        close[s], high[s], low[s] = df.close, df.high, df.low
+    C, Hh, Ll = pd.DataFrame(close), pd.DataFrame(high), pd.DataFrame(low)
     r4 = lambda x: [None if pd.isna(v) else round(float(v), 3) for v in x]
 
     h4 = C.resample("4h").last().dropna()
@@ -97,7 +117,14 @@ def build():
     dd4 = (h4 / h4.cummax() - 1) * 100
     day = C.resample("1D").last().dropna()
     ret = day.pct_change(fill_method=None)
-    vol = ret.rolling(30).std() * np.sqrt(365) * 100
+    # ATR(14) daily, làm mượt kiểu Wilder, biểu diễn theo % giá close
+    dH, dL = Hh.resample("1D").max().reindex(day.index), Ll.resample("1D").min().reindex(day.index)
+    prev = day.shift(1)
+    tr = np.maximum(np.maximum(dH - dL, (dH - prev).abs()), (dL - prev).abs())
+    atr = tr.ewm(alpha=1 / ATR_N, adjust=False, min_periods=ATR_N).mean()
+    atr_pct = atr / day * 100
+    # regime theo ngày: STRESS nếu lợi suất ngày lệch quá STRESS_Z độ lệch chuẩn so với 30 ngày trước đó
+    z = (ret - ret.rolling(REG_WIN).mean().shift(1)) / ret.rolling(REG_WIN).std().shift(1)
     me = day.resample("ME").last()
     mret = me / pd.concat([day.iloc[:1], me.iloc[:-1]]).values - 1
     months = [f"{d:%Y-%m}" + ("*" if i in (0, len(me) - 1) else "") for i, d in enumerate(me.index)]
@@ -110,7 +137,6 @@ def build():
         m["bars"] = int(C[s].size)
         met[s] = m
     ms = lambda ix: [int(x.value // 10**6) for x in ix]
-    ER_TH = 0.3  # ER 30 ngày > 0.3 ~ gấp đôi mức random walk (~0.15) => trend
     hist, dstat, reg = {}, {}, {}
     erf = np.vectorize(math.erf)
     for s in SYMS:
@@ -128,26 +154,30 @@ def build():
                     "p15_02": float((r15 > 0.002).mean() * 100), "p15_04": float((r15 > 0.004).mean() * 100)}
         hist[s] = {"edges": edges.round(3).tolist(), "pct": (cnt / len(r) * 100).round(3).tolist(),
                    "norm": (np.diff(cdf) * 100).round(3).tolist()}
-        net = day[s].pct_change(30) * 100
-        path = day[s].diff().abs().rolling(30).sum()
-        er = (day[s] - day[s].shift(30)).abs() / path
-        ok = net.notna() & er.notna() & vol[s].notna()
-        reg[s] = {"t": ms(day.index[ok]), "x": r4(net[ok]), "y": r4(vol[s][ok]), "er": r4(er[ok]),
-                  "up": [bool(v) for v in (net[ok] > 0)]}
+        ok = z[s].notna()
+        st = (z[s][ok].abs() > STRESS_Z)
+        reg[s] = {"t": ms(day.index[ok]), "r": r4(ret[s][ok] * 100), "z": r4(z[s][ok]), "s": [int(v) for v in st],
+                  "n": int(ok.sum()), "n_stress": int(st.sum())}
     return {
         "syms": SYMS, "tf": TF,
         "span": [int(C.index[0].value // 10**6), int(C.index[-1].value // 10**6)],
         "t4": ms(idx4.index), "px": {s: r4(idx4[s]) for s in SYMS}, "dd": {s: r4(dd4[s]) for s in SYMS},
-        "td": ms(vol.index), "vol": {s: r4(vol[s]) for s in SYMS},
+        "td": ms(day.index), "atr": {s: r4(atr_pct[s]) for s in SYMS}, "atr_n": ATR_N,
         "months": months, "mret": {s: r4(mret[s] * 100) for s in SYMS},
         "corr": ret.corr().round(3).values.tolist(),
-        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "wf": {s: load_wf(s) for s in SYMS}, "stats": {s: load_json(f"stats_{s}.json") for s in SYMS}, "sens": {s: load_json(f"sens_{s}.json") for s in SYMS}, "summary": (pd.read_csv(g.LOG_PATH.parent / "summary.csv").to_dict("records") if (g.LOG_PATH.parent / "summary.csv").exists() else None), "oos_eq": load_json("oos_equity.json"), "progress": progress(), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
+        "hist": hist, "dstat": dstat, "regime": reg, "stress_z": STRESS_Z, "reg_win": REG_WIN, "fold_sched": fold_schedule(), "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "wf": {s: load_wf(s) for s in SYMS}, "stats": {s: load_json(f"stats_{s}.json") for s in SYMS}, "sens": {s: load_json(f"sens_{s}.json") for s in SYMS}, "summary": (pd.read_csv(g.LOG_PATH.parent / "summary.csv").to_dict("records") if (g.LOG_PATH.parent / "summary.csv").exists() else None), "oos_eq": load_json("oos_equity.json"), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
         "rawlog": g.LOG_PATH.read_text(encoding="utf-8"),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }
 
 
-if __name__ == "__main__":
+def generate():
+    """Tạo results/report.html từ log, dữ liệu và kết quả mới nhất. Trả đường dẫn file."""
     html = TEMPLATE.read_text(encoding="utf-8").replace("/*__DATA__*/null", json.dumps(build()))
     OUT.write_text(html, encoding="utf-8")
-    print(f"wrote {OUT} ({len(html) // 1024} KB)")
+    return OUT
+
+
+if __name__ == "__main__":
+    out = generate()
+    print(f"wrote {out} ({out.stat().st_size // 1024} KB)")

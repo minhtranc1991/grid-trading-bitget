@@ -120,3 +120,18 @@ def test_decomposition_with_fees_still_adds_up():
     eq, _, _, ex = grid_sim_x(P, 90, 112, 12, "geometric", 0.001)
     assert np.isclose(ex["grid_profit"] + ex["inv_pnl"], eq[-1] - 1)
     assert ex["cycles"] > 0 and ex["grid_profit"] > 0  # có dao động nên có chu kỳ khép kín sinh lãi
+
+
+def test_broke_low_flag_and_crash_stats():
+    import pandas as pd
+    from grid_optimizer import _crash_stats, grid_sim_x
+
+    _, _, _, ex = grid_sim_x([100.5, 95.0, 100.5], 90, 110, 20, fee=0)
+    assert not ex["broke_low"] and not ex["broke_high"]
+    _, _, _, ex = grid_sim_x([100.5, 85.0, 100.5], 90, 110, 20, fee=0)
+    assert ex["broke_low"]
+    f = pd.DataFrame({"bh_return": [-0.10, 0.02, -0.06, 0.01], "def_return": [-0.04, 0.01, -0.02, 0.0], "oos_return": [0] * 4, "f_oos_return": [0] * 4,
+                      "s_oos_return": [-0.03, 0.01, -0.01, 0.0], "s_oos_brk": [1.0, 0.0, 1.0, 0.0], "def_brk": [1.0, 0.0, 0.0, 0.0]})
+    c = _crash_stats(f)
+    assert c["crash_n"] == 2 and np.isclose(c["bh_crash_ret"], -0.08) and np.isclose(c["s_oos_crash_ret"], -0.02)
+    assert c["s_oos_breach"] == 0.5 and c["s_oos_breach_crash"] == 1.0

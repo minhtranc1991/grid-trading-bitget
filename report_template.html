@@ -383,7 +383,7 @@ function renderFinal() {
   const pc = (v, d = 1) => (v * 100).toFixed(d) + "%";
   $("final").innerHTML = `<table><tr><th>Cặp</th><th>Sharpe OOS gộp [CI 95%]</th><th>Sharpe median fold</th><th>Return OOS</th><th>B&amp;H</th><th>MDD OOS</th><th>Fold lãi</th><th>Khuyến nghị dl / dh / n / bước% / mode</th><th>Ổn định</th><th>Kết luận</th></tr>` +
     D.summary.map((r) => `<tr><td>${r.symbol}</td><td>${r.oos_sharpe_pooled.toFixed(2)} [${r.sharpe_ci_lo.toFixed(2)}, ${r.sharpe_ci_hi.toFixed(2)}]</td><td>${r.oos_sharpe_median.toFixed(2)}</td><td>${pc(r.oos_return)}</td><td>${pc(r.bh_return)}</td><td>${pc(r.oos_mdd)}</td><td>${r.pct_fold_profit.toFixed(0)}%</td><td>${pc(r.rec_dl)} / ${pc(r.rec_dh)} / ${r.rec_n} / ${pc(r.rec_step_pct, 2)} / ${r.rec_mode}</td><td>${r.unstable}</td><td style="text-align:left">${r.edge}</td></tr>`).join("") + `</table>
-    <p class="note">Tham số khuyến nghị chỉ để thử nghiệm: cả 4 cặp đều UNSTABLE, dh chạm biên trên của không gian tìm kiếm (lưới gần như giữ coin), và không có bằng chứng edge so với B&amp;H.</p>
+    <p class="note">Tham số khuyến nghị chỉ để thử nghiệm: cột Ổn định cho biết tham số có đổi nhiều giữa các fold hay không. CI 95% của Sharpe OOS gộp chứa 0 nghĩa là chưa có bằng chứng thống kê về edge, dù grid giảm drawdown và lãi ở đa số fold.</p>
     <div class="row2" id="oos-eq"></div>`;
   const items = Object.entries(D.oos_eq || {}).map(([s, v], i) => {
     const el = document.createElement("div"), c = document.createElement("div");

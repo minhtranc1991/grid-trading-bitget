@@ -22,5 +22,5 @@ def test_return_and_mdd():
 
 def test_buy_and_hold_and_trades():
     assert np.allclose(buy_and_hold([50, 100, 25]), [1, 2, 0.5])
-    t, turn = grid_stats([100.5, 103.5, 100.5], 90, 110, 20)  # lên/xuống 3 line = 6 giao dịch
-    assert t == 6 and turn > 0
+    t, turn = grid_stats([100.5, 103.5, 100.5], 90, 110, 20)  # 3 bán + 2 mua lại = 5 lệnh khớp
+    assert t == 5 and turn > 0

@@ -63,6 +63,21 @@ def load_sweep(s):
             "topwide": int((top.dh == df.dh.max()).sum()), "dhmax": float(df.dh.max())}
 
 
+def load_wf(s):
+    p = g.LOG_PATH.parent / f"{s}_folds.csv"
+    if not p.exists():
+        return None
+    f = pd.read_csv(p)
+    sp = g.space_for(s)
+    return {"folds": f.round(4).to_dict("records"), "sum": {k: float(v) for k, v in g.wf_summary(f).items()},
+            "stab": {"peak": g.stability(f, sp), "flat": g.stability(f, sp, "f_")}, "dhmax": max(sp["dh"]), "default": g.DEFAULT_PICK}
+
+
+def load_json(name):
+    p = g.LOG_PATH.parent / name
+    return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
+
+
 def progress():
     txt = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
     return [{"done": d == "x", "n": int(n), "text": t.strip()} for d, n, t in re.findall(r"- \[( |x)\] \*\*STEP (\d+)\*\* (.+)", txt)]
@@ -81,7 +96,7 @@ def build():
     idx4 = h4 / h4.iloc[0] * 100
     dd4 = (h4 / h4.cummax() - 1) * 100
     day = C.resample("1D").last().dropna()
-    ret = day.pct_change()
+    ret = day.pct_change(fill_method=None)
     vol = ret.rolling(30).std() * np.sqrt(365) * 100
     me = day.resample("ME").last()
     mret = me / pd.concat([day.iloc[:1], me.iloc[:-1]]).values - 1
@@ -90,7 +105,7 @@ def build():
     met = {}
     for s in SYMS:
         m = g.metrics(g.buy_and_hold(C[s].values), bpy)
-        m["vol"] = float(C[s].pct_change().std() * np.sqrt(bpy))
+        m["vol"] = float(C[s].pct_change(fill_method=None).std() * np.sqrt(bpy))
         m["first"], m["last"] = float(C[s].iloc[0]), float(C[s].iloc[-1])
         m["bars"] = int(C[s].size)
         met[s] = m
@@ -105,7 +120,7 @@ def build():
         edges = np.linspace(-lim, lim, 41)
         cnt = np.histogram(r * 100, bins=edges)[0]
         cdf = 0.5 * (1 + erf((edges / 100 - mu) / (sd * math.sqrt(2))))
-        r15 = C[s].pct_change().dropna().abs()
+        r15 = C[s].pct_change(fill_method=None).dropna().abs()
         dstat[s] = {"mean": mu * 100, "std": sd * 100, "skew": float(r.skew()), "kurt": float(r.kurt()),
                     "min": float(r.min() * 100), "max": float(r.max() * 100),
                     "tail2": float((abs(r - mu) > 2 * sd).mean() * 100),
@@ -126,7 +141,7 @@ def build():
         "td": ms(vol.index), "vol": {s: r4(vol[s]) for s in SYMS},
         "months": months, "mret": {s: r4(mret[s] * 100) for s in SYMS},
         "corr": ret.corr().round(3).values.tolist(),
-        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "progress": progress(), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
+        "hist": hist, "dstat": dstat, "reg": reg, "erth": ER_TH, "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "wf": {s: load_wf(s) for s in SYMS}, "stats": {s: load_json(f"stats_{s}.json") for s in SYMS}, "sens": {s: load_json(f"sens_{s}.json") for s in SYMS}, "summary": (pd.read_csv(g.LOG_PATH.parent / "summary.csv").to_dict("records") if (g.LOG_PATH.parent / "summary.csv").exists() else None), "oos_eq": load_json("oos_equity.json"), "progress": progress(), "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
         "rawlog": g.LOG_PATH.read_text(encoding="utf-8"),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }

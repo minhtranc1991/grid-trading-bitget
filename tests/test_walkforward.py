@@ -54,10 +54,10 @@ def test_stable_pick_is_good_in_both_windows():
     P_sel = 100 + 5 * np.sin(np.linspace(0, 20, 672))
     res = g.sweep(P_is, SPACE, 0.001)
     st = g.stable_pick(res, SPACE, P_sel, 0.001, g.BARS_PER_YEAR["15m"])
-    assert st["score"] == min(st["is_sharpe"], st["sel_sharpe"])
+    assert st["score"] == min(st["is_score"], st["sel_score"])  # score = lợi suất quy về tuần (mục tiêu mặc định)
     top = res.iloc[0]
-    top_oos = g._grid_oos(P_sel, top.dl, top.dh, int(top.n), top["mode"], 0.001, g.BARS_PER_YEAR["15m"])["sharpe"]
-    assert st["score"] >= min(top.sharpe, top_oos) - 1e-12  # không kém ứng viên đỉnh nhọn theo tiêu chí min()
+    top_oos = g.objective_value(g._grid_oos(P_sel, top.dl, top.dh, int(top.n), top["mode"], 0.001, g.BARS_PER_YEAR["15m"]))
+    assert st["score"] >= min(top.score, top_oos) - 1e-12  # không kém ứng viên đỉnh nhọn theo tiêu chí min()
 
 
 def test_summary_keys():

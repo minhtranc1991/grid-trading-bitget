@@ -18,7 +18,8 @@ def test_sweep_filters_and_sorted():
     space = {"dl": [0.02, 0.05, 0.1], "dh": [0.02, 0.05, 0.1], "n": [4, 10, 40, 500], "mode": ["arithmetic", "geometric"]}
     r = g.sweep(P, space, fee, safety=2, min_trades=20, max_grids=100)
     assert len(r) > 0
-    assert r.sharpe.is_monotonic_decreasing
+    assert r.score.is_monotonic_decreasing  # mặc định sắp theo lợi suất (mục tiêu)
+    assert np.allclose(r.score, r.ret_wk)
     assert (r.step_pct >= 2 * fee * 2 - 1e-12).all()  # lọc bước% >= 2·fee·hệ số an toàn
     assert (r.trades >= 20).all()
     assert (r.n <= 100).all()  # n=500 bị loại bởi MAX_GRIDS
@@ -50,3 +51,11 @@ def test_stability_flags_wide_iqr():
     wide = pd.DataFrame({"dl": [0.01, 0.5, 0.01, 0.5], "dh": [0.25] * 4, "step_pct": [0.01] * 4})
     tight = pd.DataFrame({"dl": [0.2] * 4, "dh": [0.25] * 4, "step_pct": [0.01] * 4})
     assert g.stability(wide, sp)["unstable"] and not g.stability(tight, sp)["unstable"]
+
+
+def test_objective_selects_top_by_that_metric():
+    P = 100 + 5 * np.sin(np.linspace(0, 60, 3000))
+    space = {"dl": [0.02, 0.05, 0.1], "dh": [0.02, 0.05, 0.1], "n": [4, 10, 20], "mode": ["arithmetic", "geometric"]}
+    for obj, col in (("return", "return"), ("sharpe", "sharpe"), ("sortino", "sortino"), ("calmar", "calmar")):
+        r = g.sweep(P, space, 0.001, objective=obj)
+        assert r.iloc[0][col] == r[col].max()

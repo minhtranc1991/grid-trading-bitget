@@ -143,17 +143,36 @@ def grid_stats(prices, low, high, n, mode="arithmetic"):
 BARS_PER_YEAR = {"1m": 525600, "5m": 105120, "15m": 35040, "30m": 17520, "1h": 8760, "4h": 2190}  # crypto 24/7
 
 
+OBJECTIVE = "return"  # chỉ số được TỐI ƯU: return (lợi suất thuần, quy về tuần) | sharpe | sortino | calmar; còn lại chỉ để tham khảo
+OBJECTIVES = ("return", "sharpe", "sortino", "calmar")
+
+
 def metrics(equity, bars_per_year, trades=0, turnover=0.0):
+    """return = lợi suất cả cửa sổ; ret_wk = lợi suất quy về một tuần (return · bars_mỗi_tuần / số bar), để so các cửa sổ dài ngắn khác nhau;
+    sortino = mean / độ lệch xuống · √bars_năm; calmar = lợi suất quy năm / |MDD|."""
     eq = np.asarray(equity, float)
     r = np.diff(eq) / eq[:-1]
     sd = r.std(ddof=1)
+    dd = float(np.sqrt(np.mean(np.minimum(r, 0.0) ** 2)))
+    ret = float(eq[-1] / eq[0] - 1)
+    mdd = float((eq / np.maximum.accumulate(eq) - 1).min())
+    nb = max(len(r), 1)
     return {
         "sharpe": float(r.mean() / sd * np.sqrt(bars_per_year)) if sd > 0 else 0.0,
-        "return": float(eq[-1] / eq[0] - 1),
-        "mdd": float((eq / np.maximum.accumulate(eq) - 1).min()),
+        "sortino": float(r.mean() / dd * np.sqrt(bars_per_year)) if dd > 0 else 0.0,
+        "return": ret,
+        "ret_wk": ret * (bars_per_year / 52) / nb,
+        "mdd": mdd,
+        "calmar": float(ret * (bars_per_year / nb) / max(abs(mdd), 1e-9)),
         "trades": trades,
         "turnover": turnover,
     }
+
+
+def objective_value(m, objective=None):
+    """Giá trị của chỉ số đang tối ưu trong dict metrics."""
+    obj = OBJECTIVE if objective is None else objective
+    return m["ret_wk"] if obj == "return" else m[obj]
 
 
 def buy_and_hold(prices):
@@ -181,8 +200,8 @@ def step_pct(low, high, n, mode):
     return (high / low) ** (1 / n) - 1
 
 
-def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, min_trades=20, max_grids=MAX_GRIDS):
-    """Quét lưới tham số, trả DataFrame sắp theo Sharpe giảm dần. IN-SAMPLE."""
+def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, min_trades=20, max_grids=MAX_GRIDS, objective=None):
+    """Quét lưới tham số, trả DataFrame sắp theo score (chỉ số mục tiêu) giảm dần. IN-SAMPLE."""
     P = np.asarray(prices, float)
     p0, rows = P[0], []
     for dl in space["dl"]:
@@ -199,19 +218,19 @@ def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, mi
                     if trades < min_trades:
                         continue
                     m = metrics(eq, bars_per_year, trades, turn)
-                    rows.append({"dl": dl, "dh": dh, "n": n, "mode": mode, "step_pct": st, **m})
-    cols = ["dl", "dh", "n", "mode", "step_pct", "sharpe", "return", "mdd", "trades", "turnover"]
-    return pd.DataFrame(rows, columns=cols).sort_values("sharpe", ascending=False).reset_index(drop=True)
+                    rows.append({"dl": dl, "dh": dh, "n": n, "mode": mode, "step_pct": st, **m, "score": objective_value(m, objective)})
+    cols = ["dl", "dh", "n", "mode", "step_pct", "score", "return", "ret_wk", "sharpe", "sortino", "calmar", "mdd", "trades", "turnover"]
+    return pd.DataFrame(rows, columns=cols).sort_values("score", ascending=False).reset_index(drop=True)
 
 
-def heatmap(df, path, title):
+def heatmap(df, path, title, col="score"):
     """Sharpe tốt nhất theo (dl, n) trên lát cắt đối xứng dh = dl, max trên mode."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.colors import TwoSlopeNorm
 
-    pv = df[np.isclose(df.dl, df.dh)].pivot_table(index="dl", columns="n", values="sharpe", aggfunc="max")
+    pv = df[np.isclose(df.dl, df.dh)].pivot_table(index="dl", columns="n", values=col, aggfunc="max")
     v = pv.values
     lim = max(abs(np.nanmin(v)), abs(np.nanmax(v)), 1e-9)
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -223,8 +242,8 @@ def heatmap(df, path, title):
             ax.text(j, i, f"{val:.1f}", ha="center", va="center", fontsize=8)
     ax.set_xlabel("n (số khoảng lưới)")
     ax.set_ylabel("dl (low = P0·(1-dl))")
-    ax.set_title(title + "\nIN-SAMPLE: không dùng để kết luận (dh = dl, max trên mode)")
-    fig.colorbar(im, label="Sharpe")
+    ax.set_title(title + "\nIN-SAMPLE: không dùng để kết luận (dh = dl, tốt nhất theo mode)")
+    fig.colorbar(im, label=col)
     Path(path).parent.mkdir(exist_ok=True)
     fig.savefig(path, dpi=110, bbox_inches="tight")
     plt.close(fig)
@@ -249,8 +268,9 @@ def run_sweep(symbol, tf, df, window_days, fee, max_grids=MAX_GRIDS):
     meta = {"window_days": window_days, "fee": fee, "combos": total, "passed": len(res), "bh": bh,
             "rows": res.to_dict("records")}
     (out.parent / f"sweep_{symbol}.json").write_text(json.dumps(meta), encoding="utf-8")  # cho make_report.py
-    heatmap(res, out, f"{symbol} Sharpe: dl x n ({window_days}d)")
-    log.info("SWEEP %s B&H cửa sổ: sharpe=%.2f return=%+.1f%%; top1 sharpe=%.2f", symbol, bh["sharpe"], 100 * bh["return"], res.sharpe.iloc[0])
+    heatmap(res, out, f"{symbol} {OBJECTIVE}: dl x n ({window_days}d)")
+    log.info("SWEEP %s mục tiêu=%s: B&H cửa sổ sharpe=%.2f return=%+.1f%%; top1 return=%+.1f%% sharpe=%.2f", symbol, OBJECTIVE, bh["sharpe"],
+             100 * bh["return"], 100 * res["return"].iloc[0], res.sharpe.iloc[0])
     log.info("SWEEP %s heatmap -> %s", symbol, out)
     return res
 
@@ -306,7 +326,7 @@ def smooth_pick(res, space):
     shape = (len(dli), len(dhi))
     r = res.reset_index(drop=True)
     il, ih = r.dl.map(dli).values, r.dh.map(dhi).values
-    sharpe = r.sharpe.values
+    sharpe = (r.score if "score" in r else r.sharpe).values
     best_i, best_score, fb_i, fb_cnt, fb_avg = -1, -np.inf, -1, -1, -np.inf
     for idx in r.groupby(["n", "mode"]).indices.values():
         A = np.full(shape, np.nan)
@@ -361,18 +381,22 @@ TOP_K = 20  # số ứng viên lấy từ IS
 PICK_PREFIX = {"peak": "", "flat": "f_", "stable": "s_"}
 
 
-def stable_pick(res, space, sel_px, fee, bpy, top_k=TOP_K, flat=None):
-    """Tham số ổn định: ứng viên = top_k theo Sharpe IS + tham số phẳng của IS; chấm lại trên tuần OOS-select;
-    chọn ứng viên có min(Sharpe IS, Sharpe OOS) cao nhất, tức là tốt ở cả hai nơi chứ không chỉ ở IS."""
-    cands = [(r.dl, r.dh, int(r.n), r["mode"], r.sharpe, r.step_pct) for _, r in res.head(top_k).iterrows()]
+def stable_pick(res, space, sel_px, fee, bpy, top_k=TOP_K, flat=None, objective=None):
+    """Tham số ổn định: ứng viên = top_k theo score IS + tham số phẳng của IS; chấm lại trên tuần OOS-select;
+    chọn ứng viên có min(score IS, score OOS) cao nhất, tức là tốt ở cả hai nơi chứ không chỉ ở IS.
+    score = chỉ số mục tiêu (mặc định lợi suất quy về tuần)."""
+    sc = "score" if "score" in res else "sharpe"
+    cands = [(r.dl, r.dh, int(r.n), r["mode"], r[sc], r.sharpe, r.step_pct) for _, r in res.head(top_k).iterrows()]
     fl = smooth_pick(res, space) if flat is None else flat
-    cands.append((fl.dl, fl.dh, int(fl.n), fl["mode"], fl.sharpe, fl.step_pct))
+    cands.append((fl.dl, fl.dh, int(fl.n), fl["mode"], fl[sc], fl.sharpe, fl.step_pct))
     best = None
-    for dl, dh, n, mode, is_sh, st in cands:
+    for dl, dh, n, mode, is_sc, is_sh, st in cands:
         m = _grid_oos(sel_px, dl, dh, n, mode, fee, bpy)
-        score = min(is_sh, m["sharpe"])
+        sel_sc = objective_value(m, objective)
+        score = min(is_sc, sel_sc)
         if best is None or score > best["score"]:
-            best = {"dl": dl, "dh": dh, "n": n, "mode": mode, "step_pct": st, "is_sharpe": is_sh, "sel_sharpe": m["sharpe"], "score": score}
+            best = {"dl": dl, "dh": dh, "n": n, "mode": mode, "step_pct": st, "is_sharpe": is_sh, "sel_sharpe": m["sharpe"],
+                    "is_score": is_sc, "sel_score": sel_sc, "score": score}
     return best
 
 
@@ -395,14 +419,14 @@ JOBS = 1  # số tiến trình chạy song song các fold (CLI --jobs đặt m�
 
 def _wf_fold(t):
     """Một fold độc lập (chạy được trong tiến trình con): IS -> OOS chọn tham số ổn định -> forward."""
-    k, tr, sel, te, ts_bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k = t
+    k, tr, sel, te, ts_bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective = t
     bpy = BARS_PER_YEAR[tf]
-    res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids)
+    res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids, objective=objective)
     if res.empty:
         return k, None
     best = res.iloc[0]  # đỉnh in-sample
     fl = smooth_pick(res, space)
-    st = stable_pick(res, space, sel, fee, bpy, top_k, flat=fl)
+    st = stable_pick(res, space, sel, fee, bpy, top_k, flat=fl, objective=objective)
     oos = _grid_oos(te, best.dl, best.dh, int(best.n), best["mode"], fee, bpy)
     foos = _grid_oos(te, fl.dl, fl.dh, int(fl.n), fl["mode"], fee, bpy)
     soos = _grid_oos(te, st["dl"], st["dh"], st["n"], st["mode"], fee, bpy)
@@ -414,8 +438,11 @@ def _wf_fold(t):
         deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
         dm2 = metrics(deq2, bpy)
     else:
-        dm = dm2 = {"sharpe": np.nan, "return": np.nan, "mdd": np.nan}
+        dm = dm2 = {k_: np.nan for k_ in ("sharpe", "sortino", "calmar", "ret_wk", "return", "mdd")}
         dres = dres2 = np.nan
+    ex = {}
+    for p, m_ in (("oos", oos), ("f_oos", foos), ("s_oos", soos), ("def", dfl), ("bh", bh), ("dgt", dm), ("dgtdef", dm2)):
+        ex.update({p + "_sortino": m_["sortino"], p + "_calmar": m_["calmar"], p + "_retwk": m_["ret_wk"]})
     is_first, is_last, sel_last, t_start, t_end = ts_bounds
     return k, {
         "fold": k, "is_start": is_first, "is_last_ts": is_last, "train_last_ts": sel_last, "test_start": t_start, "test_end": t_end,
@@ -430,11 +457,12 @@ def _wf_fold(t):
         "dl": best.dl, "dh": best.dh, "n": int(best.n), "mode": best["mode"], "step_pct": best.step_pct,
         "is_sharpe": best.sharpe, "oos_sharpe": oos["sharpe"], "oos_return": oos["return"], "oos_mdd": oos["mdd"],
         "oos_trades": oos["trades"], "bh_sharpe": bh["sharpe"], "bh_return": bh["return"], "bh_mdd": bh["mdd"],
-        "def_sharpe": dfl["sharpe"], "def_return": dfl["return"], "def_mdd": dfl["mdd"], "def_trades": dfl["trades"]}
+        "def_sharpe": dfl["sharpe"], "def_return": dfl["return"], "def_mdd": dfl["mdd"], "def_trades": dfl["trades"],
+        "s_is_score": st["is_score"], "s_sel_score": st["sel_score"], "f_is_score": float(fl.score), "is_score": float(best.score), **ex}
 
 
 def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, step_days=7, space=None, safety=2.0,
-                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K, jobs=None):
+                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K, jobs=None, objective=None):
     """Mỗi fold (trượt step_days):
       IS     [a, b)  : sweep, tìm tham số tối ưu (đỉnh nhọn và phẳng)
       OOS    [b, s)  : chấm các ứng viên của IS, chọn tham số ổn định (tốt ở cả IS và OOS)
@@ -442,6 +470,7 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, st
     Các fold độc lập nên chạy song song bằng jobs tiến trình (kết quả y hệt chạy tuần tự)."""
     select_days = SELECT_DAYS if select_days is None else select_days
     jobs = JOBS if jobs is None else jobs
+    objective = OBJECTIVE if objective is None else objective
     ts, px = df.ts.values, df.close.values
     space, tasks, k = space or space_for(symbol), [], 0
     while True:
@@ -453,7 +482,7 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, st
             break
         i0, i1, i2, i3 = np.searchsorted(ts, [a, b, s_end, c])
         bounds = (int(ts[i0]), int(ts[i1 - 1]), int(ts[i2 - 1]), int(ts[i2]), int(ts[i3 - 1]))
-        tasks.append((k, px[i0:i1], px[i1:i2], px[i2:i3], bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k))
+        tasks.append((k, px[i0:i1], px[i1:i2], px[i2:i3], bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective))
         k += 1
     if jobs > 1 and len(tasks) > 1:
         out = list(_get_pool(jobs).map(_wf_fold, tasks))
@@ -487,7 +516,9 @@ def wf_summary(f):
             # DGT trên tham số ổn định
             "dgt_sharpe_median": med("dgt_sharpe"), "dgt_return_median": med("dgt_return"), "dgt_pct_profit": pp("dgt_return"),
             "dgt_pct_beat_bh": float((f.dgt_return > f.bh_return).mean() * 100), "dgt_resets_median": med("dgt_resets"),
-            "dgtdef_sharpe_median": med("dgtdef_sharpe"), "dgtdef_return_median": med("dgtdef_return")}
+            "dgtdef_sharpe_median": med("dgtdef_sharpe"), "dgtdef_return_median": med("dgtdef_return"),
+            **{f"{b}_{k}_median": (med(f"{b}_{k}") if f"{b}_{k}" in f else float("nan"))
+               for b in ("bh", "def", "oos", "f_oos", "s_oos", "dgt", "dgtdef") for k in ("retwk", "sortino", "calmar")}}
 
 
 def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
@@ -500,6 +531,8 @@ def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
     sp = space_for(symbol)
     st = stability(f, sp, "s_")
     log.info("WF %s IS=%dd OOS-select=%dd forward=%dd step=%dd: %d fold, %.1fs", symbol, train, SELECT_DAYS, test, step, s["folds"], time.time() - t0)
+    log.info("WF %s mục tiêu=%s | return/tuần median: stable=%+.2f%% flat=%+.2f%% peak=%+.2f%% default=%+.2f%% B&H=%+.2f%%", symbol, OBJECTIVE,
+             100 * s["s_oos_retwk_median"], 100 * s["f_oos_retwk_median"], 100 * s["oos_retwk_median"], 100 * s["def_retwk_median"], 100 * s["bh_retwk_median"])
     log.info("WF %s Sharpe median (forward): stable=%.2f flat=%.2f peak=%.2f default=%.2f B&H=%.2f DGT=%.2f; %%fold lãi stable=%.0f%% (B&H %.0f%%), "
              "%%fold hơn B&H=%.0f%%; in-sample(stable)=%.2f, OOS-select(stable)=%.2f; %s", symbol, s["s_oos_sharpe_median"],
              s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["def_sharpe_median"], s["bh_sharpe_median"], s["dgt_sharpe_median"],
@@ -588,11 +621,11 @@ def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "
     for m in fees:
         s = wf_summary(walk_forward(df15, "15m", symbol, fee * m, with_dgt=False, max_grids=max_grids))
         base = s if m == 1.0 else base
-        rows.append({"kind": "fee", "label": f"{m:g}x ({fee * m:.4f})", **{k: s[k] for k in ("s_oos_sharpe_median", "f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "s_pct_profit", "folds")}})
+        rows.append({"kind": "fee", "label": f"{m:g}x ({fee * m:.4f})", **{k: s[k] for k in ("s_oos_sharpe_median", "f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "s_oos_retwk_median", "bh_retwk_median", "s_pct_profit", "folds")}})
         log.info("SENS %s fee x%g: stable=%.2f flat=%.2f peak=%.2f B&H=%.2f", symbol, m, s["s_oos_sharpe_median"], s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
     for tf in tfs:
         s = base if tf == "15m" and base else wf_summary(walk_forward(load_ohlcv(symbol, tf, days), tf, symbol, fee, with_dgt=False, max_grids=max_grids))
-        rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("s_oos_sharpe_median", "f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "s_pct_profit", "folds")}})
+        rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("s_oos_sharpe_median", "f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "s_oos_retwk_median", "bh_retwk_median", "s_pct_profit", "folds")}})
         log.info("SENS %s tf %s: stable=%.2f flat=%.2f peak=%.2f B&H=%.2f", symbol, tf, s["s_oos_sharpe_median"], s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
     (Path(__file__).parent / "results" / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")
     return rows
@@ -625,6 +658,7 @@ def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRID
     last = float(df.close.iloc[-1])
     row = {"symbol": symbol, "tf": tf, "fee": fee, "folds": len(f), "oos_sharpe_median": f[pre + "oos_sharpe"].median(),
            "oos_sharpe_pooled": pt, "sharpe_ci_lo": lo, "sharpe_ci_hi": hi, "oos_return": mg["return"], "oos_mdd": mg["mdd"],
+           "oos_sortino": mg["sortino"], "oos_calmar": mg["calmar"], "bh_sortino": mb["sortino"], "bh_calmar": mb["calmar"], "objective": OBJECTIVE,
            "pct_fold_profit": float((f[pre + "oos_return"] > 0).mean() * 100), "bh_sharpe_pooled": mb["sharpe"],
            "bh_return": mb["return"], "bh_mdd": mb["mdd"], "rec_dl": rec.dl, "rec_dh": rec.dh, "rec_n": int(rec.n),
            "rec_step_pct": rec.step_pct, "rec_mode": rec["mode"], "rec_low": last * (1 - rec.dl), "rec_high": last * (1 + rec.dh),
@@ -675,6 +709,8 @@ def main():
     ap.add_argument("--sweep", action="store_true", help="STEP 4: quét tham số trên cửa sổ cuối (in-sample)")
     ap.add_argument("--window", type=int, default=90, help="số ngày của cửa sổ sweep")
     ap.add_argument("--fee", type=float, default=DEFAULT_FEE)
+    ap.add_argument("--objective", choices=OBJECTIVES, default=OBJECTIVE,
+                    help="chỉ số tối ưu (mặc định return = lợi suất thuần); Sharpe/Sortino/Calmar vẫn được báo cáo để tham khảo")
     ap.add_argument("--max-grids", type=int, default=MAX_GRIDS, help="trần số lưới n (cần xác minh trong app Bitget)")
     ap.add_argument("--walkforward", action="store_true", help="STEP 5: walk-forward OOS")
     ap.add_argument("--stats", action="store_true", help="STEP 8: CI bootstrap + Deflated Sharpe")
@@ -687,6 +723,7 @@ def main():
     ap.add_argument("--jobs", type=int, default=min(8, os.cpu_count() or 1), help="số tiến trình song song cho các fold (tối đa 8)")
     a = ap.parse_args()
     globals()["SELECT_DAYS"] = a.select
+    globals()["OBJECTIVE"] = a.objective
     globals()["JOBS"] = max(1, min(a.jobs, 8))
     LOG_PATH.parent.mkdir(exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(process)d] %(message)s",  # PID để tách các lần chạy chồng nhau

@@ -16,7 +16,8 @@ URL = "https://api.bitget.com/api/v2/spot/market/history-candles"
 GRAN = {"1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "4h": "4h"}
 BAR_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000}
 PAGE = 200  # history-candles limit tối đa (đã thử: 1000 -> lỗi 40020)
-LOG_PATH = Path(__file__).parent / "results" / "run.log"
+RESULTS_DIR = Path(__file__).parent / "results"  # tests đổi sang thư mục tạm để không ghi đè kết quả thật
+LOG_PATH = RESULTS_DIR / "run.log"
 log = logging.getLogger("grid")
 COLS = ["ts", "open", "high", "low", "close", "base_vol", "quote_vol"]
 
@@ -289,7 +290,7 @@ def run_sweep(symbol, tf, df, window_days, fee, max_grids=MAX_GRIDS):
     print(f"B&H cùng cửa sổ: sharpe={bh['sharpe']:.2f} return={bh['return']:+.1%} mdd={bh['mdd']:.1%}")
     print("BOTTOM 5")
     print(res.tail(5).to_string(formatters=fmt))
-    out = Path(__file__).parent / "results" / f"heatmap_{symbol[:-4]}.png"
+    out = RESULTS_DIR / f"heatmap_{symbol[:-4]}.png"
     meta = {"window_days": window_days, "fee": fee, "combos": total, "passed": len(res), "bh": bh,
             "rows": res.to_dict("records")}
     (out.parent / f"sweep_{symbol}.json").write_text(json.dumps(meta), encoding="utf-8")  # cho make_report.py
@@ -553,7 +554,7 @@ def wf_summary(f):
 def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
     t0 = time.time()
     f = walk_forward(df, tf, symbol, fee, train, test, step, max_grids=max_grids)
-    out = Path(__file__).parent / "results" / f"{symbol}_folds.csv"
+    out = RESULTS_DIR / f"{symbol}_folds.csv"
     out.parent.mkdir(exist_ok=True)
     f.to_csv(out, index=False)
     s = wf_summary(f)
@@ -638,7 +639,7 @@ def run_stats(symbol, tf, df, fee, train=28, test=7, step=7, window=90, max_grid
     out = {"symbol": symbol, "tf": tf, "fee": fee, "folds": len(f), "bars": int(len(gr)), "n_trials": ntr,
            "grid_ci": ci_g, "bh_ci": ci_b, "diff_ci": ci_d, "psr0": psr, "dsr": dsr, "sr0_bar": sr0,
            "sr0_annual": sr0 * np.sqrt(bpy), "verdict": verdict}
-    path = Path(__file__).parent / "results" / f"stats_{symbol}.json"
+    path = RESULTS_DIR / f"stats_{symbol}.json"
     path.write_text(json.dumps(out), encoding="utf-8")
     log.info("STATS %s: Sharpe OOS %.2f [%.2f, %.2f], B&H %.2f [%.2f, %.2f], hiệu %.2f [%.2f, %.2f]; PSR(0)=%.3f DSR=%.3f, %d tổ hợp; %s",
              symbol, ci_g[1], ci_g[0], ci_g[2], ci_b[1], ci_b[0], ci_b[2], ci_d[1], ci_d[0], ci_d[2], psr, dsr, ntr, verdict)
@@ -658,7 +659,7 @@ def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "
         s = base if tf == "15m" and base else wf_summary(walk_forward(load_ohlcv(symbol, tf, days), tf, symbol, fee, with_dgt=False, max_grids=max_grids))
         rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("s_oos_sharpe_median", "f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "s_oos_retwk_median", "bh_retwk_median", "s_pct_profit", "folds")}})
         log.info("SENS %s tf %s: stable=%.2f flat=%.2f peak=%.2f B&H=%.2f", symbol, tf, s["s_oos_sharpe_median"], s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
-    (Path(__file__).parent / "results" / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")
+    (RESULTS_DIR / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")
     return rows
 
 
@@ -667,7 +668,7 @@ def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRID
     """Walk-forward + CI + tham số khuyến nghị cho một cặp. Trả (dòng summary, chuỗi equity OOS)."""
     bpy, sp = BARS_PER_YEAR[tf], space_for(symbol)
     f = walk_forward(df, tf, symbol, fee, train, test, step, max_grids=max_grids)
-    out = Path(__file__).parent / "results" / f"{symbol}_folds.csv"
+    out = RESULTS_DIR / f"{symbol}_folds.csv"
     out.parent.mkdir(exist_ok=True)
     f.to_csv(out, index=False)
     f["fee"] = fee
@@ -707,7 +708,7 @@ def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRID
 
 
 def write_final(rows, series):
-    d = Path(__file__).parent / "results"
+    d = RESULTS_DIR
     pd.DataFrame(rows).to_csv(d / "summary.csv", index=False)
     (d / "oos_equity.json").write_text(json.dumps(series), encoding="utf-8")
     import matplotlib

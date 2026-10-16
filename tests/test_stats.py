@@ -36,7 +36,7 @@ def test_oos_returns_length_matches_folds():
     import pandas as pd
     df = pd.DataFrame({"ts": 1_700_000_000_000 + np.arange(n) * 900_000, "close": 100 * np.exp(np.cumsum(rng.normal(0, 0.003, n)))})
     sp = {"dl": [0.02, 0.05, 0.1], "dh": [0.02, 0.05, 0.1], "n": [4, 10], "mode": ["arithmetic", "geometric"]}
-    f = g.walk_forward(df, "15m", "BTCUSDT", space=sp, with_dgt=False)
+    f = g.walk_forward(df, "15m", "BTCUSDT", space=sp, with_dgt=False, min_dl=0, min_range=0, min_n=0)
     f["fee"] = 0.001
     gr, bh = g.oos_returns(df, f)
     assert len(gr) == len(bh) == len(f) * (7 * 96 - 1)  # mỗi fold forward 7 ngày = 672 bar -> 671 lợi suất

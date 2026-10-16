@@ -54,38 +54,38 @@ Kiểm chứng: test tính tay (lên-xuống qua k line; mỗi vòng 100.5→98.
 - Lưới + vị thế = lợi suất tổng (có test). Sharpe, Sortino, Calmar và lợi suất tổng chỉ để tham khảo; `--objective return|sharpe|sortino|calmar` vẫn dùng được.
 - Tỷ lệ khớp: số chu kỳ khép kín mỗi ngày (`cycles_day`), và `bước lưới / ATR ngày`.
 
-**Kết quả forward, trung bình mỗi tuần (72 tuần/cặp, tham số ổn định, mục tiêu = lợi nhuận lưới):**
+**Ràng buộc lưới rộng và dày (mặc định bật):** quan sát 5 bot thật (xem `data/refs/bot_screenshots_analysis.md`) cho thấy phạm vi 12–26% và 14–34 lưới, lỗ vị thế nhẹ hơn tối ưu hẹp và thưa. Tối ưu vì vậy chỉ xét cấu hình có **`dl ≥ 10%`** (có sẵn lệnh mua khi giá rơi), **`dl + dh ≥ 12%`**, **`n ≥ 14`**, bước ≥ 0.4% (`--min-dl`, `--min-range`, `--min-grids`; đặt 0 để tắt). Không gian tìm kiếm của vàng mở rộng thêm `dl, dh` = 12%, 15%, 20%. Mục tiêu: lưới phủ được một phần các tuần giá sập.
 
-| Cặp | Lưới | Vị thế | Tổng | Buy & Hold | Chu kỳ khép kín/ngày |
-|---|---|---|---|---|---|
-| BTC | **+0.40%** | −1.08% | −0.68% | −0.27% | 0.29 |
-| ETH | **+0.58%** | −1.28% | −0.69% | +0.30% | 0.21 |
-| PAXG | **+0.15%** | −0.37% | −0.22% | +0.36% | 0.14 |
-| XAUT | **+0.17%** | −0.38% | −0.21% | +0.35% | 0.14 |
+**A/B cùng quy trình, 72 tuần forward (tham số ổn định, có ràng buộc so với tự do):**
 
-Lưới mặc định ±10%, n=20 để so sánh (lưới / vị thế / tổng mỗi tuần): BTC +0.25% / −0.84% / −0.59%; ETH +0.48% / −1.34% / −0.87%; PAXG +0.09% / −0.08% / +0.02%; XAUT +0.09% / −0.08% / +0.01%; chu kỳ/ngày 0.79 / 1.57 / 0.14 / 0.14.
+| Cặp | Tổng/tuần | Lưới/tuần | Vị thế/tuần | Tuần sập: lợi suất (B&H) | Tuần giá phá đáy lưới | Lợi suất gộp | MDD gộp |
+|---|---|---|---|---|---|---|---|
+| BTC | **−0.41%** vs −0.68% | +0.25% vs +0.40% | −0.66% vs −1.08% | **−3.8%** vs −5.6% (−8.3%), 13 tuần | **7%** vs 44% | **−26.7%** vs −41.0% | **−36.3%** vs −48.8% |
+| ETH | **−0.24%** vs −0.69% | +0.44% vs +0.58% | −0.68% vs −1.28% | **−5.1%** vs −7.9% (−10.6%), 16 tuần | **8%** vs 51% | **−19.8%** vs −44.2% | **−48.7%** vs −59.2% |
+| PAXG | **−0.06%** vs −0.22% | +0.09% vs +0.14% | −0.15% vs −0.36% | **−3.4%** vs −5.9% (−7.0%), 5 tuần | **1%** vs 42% | **−4.8%** vs −15.8% | **−16.0%** vs −25.4% |
+| XAUT | **−0.03%** vs −0.20% | +0.08% vs +0.17% | −0.11% vs −0.37% | **−3.3%** vs −5.9% (−6.9%), 5 tuần | **3%** vs 40% | **−2.6%** vs −15.1% | **−14.0%** vs −26.5% |
 
-**Phát hiện chính:**
-1. **Cơ chế lưới hoạt động đúng: lợi nhuận lưới dương ở cả 4 cặp.** Tối ưu theo mục tiêu này cũng **bền hơn** mục tiêu lợi suất thuần: lãi lưới trung vị giảm từ IS sang forward khoảng 50–60% (BTC 0.57% → 0.28%/tuần), so với 80–95% khi tối ưu lợi suất thuần.
-2. **Nhưng phần vị thế lỗ lớn gấp 2–3 lần lãi lưới**, nên tổng âm ở cả 4 cặp. Tối ưu lợi nhuận lưới chọn range hẹp với ít lưới (dl và dh trung vị 1.5–3%, n trung vị 6): gặt bước lưới đều nhưng khi giá chạy ra khỏi range về phía dưới thì lưới ôm toàn bộ coin giảm giá.
-3. **Lưới mặc định rộng (±10%) ít chịu lỗ vị thế hơn** ở vàng (tổng ≈ 0%) dù lãi lưới thấp hơn: range rộng giữ vị thế nhỏ hơn.
-4. Trên vàng, grid kém B&H **có ý nghĩa thống kê** (CI hiệu Sharpe: PAXG [−3.55, −0.17], XAUT [−3.58, −0.23]); crypto chứa 0.
+Đọc kết quả:
+- **Phủ được các tuần sập:** tuần giá phá đáy lưới giảm từ 40–51% xuống 1–8%; trong các tuần sập (giữ coin giảm hơn 5%) lưới lỗ khoảng một nửa so với giữ coin; số tuần lỗ trên 3% giảm (BTC 12 → 7, ETH 14 → 9, PAXG 8 → 2, XAUT 7 → 4).
+- **Đánh đổi nhỏ:** lãi lưới giảm (BTC 0.40% → 0.25%/tuần) vì bước lưới nhỏ hơn mỗi vòng; nhưng lỗ vị thế giảm nhiều hơn nên tổng tốt hơn ở cả 4 cặp. Chu kỳ khép kín/ngày của crypto tăng (0.57–0.72 so với 0.21–0.29), tiến gần bot thật (1.6–2.0).
+- Ràng buộc `dl ≥ 10%` đang **bám sát**: bộ tối ưu chọn đúng giá trị nhỏ nhất cho phép (`dl` = 12%), nên phần phủ phía dưới do ràng buộc quyết định, không do dữ liệu.
 
-**Thống kê (STEP 8):** CI 95% của Sharpe gộp (lợi suất tổng): BTC −1.26 [−2.83, 0.35]; ETH −0.79 [−2.40, 0.91]; PAXG −0.63 [−2.05, 0.79]; XAUT −0.63 [−2.10, 0.82]. Độ nhạy phí/khung nến xem mục 11 của báo cáo.
+**Thống kê (STEP 8, có ràng buộc):** CI 95% của Sharpe gộp (lợi suất tổng): BTC −0.98 [−2.55, 0.68]; ETH −0.30 [−1.98, 1.47]; PAXG −0.26 [−1.70, 1.08]; XAUT −0.12 [−1.54, 1.27]. CI của hiệu grid − B&H chứa 0 ở cả 4 cặp. Lãi lưới trung vị giảm từ IS sang forward ~35–55% (BTC 0.33% → 0.20%/tuần). Độ nhạy phí/khung nến xem mục 11 của báo cáo.
 
-**Tóm tắt cuối (STEP 9, `results/summary.csv`)**: IS 28d / OOS 7d / forward 7d, phí 0.1%, 72 fold/cặp, mục tiêu lợi nhuận lưới, tham số ổn định.
+**Tóm tắt cuối (STEP 9, `results/summary.csv`)**: IS 28d / OOS 7d / forward 7d, phí 0.1%, 72 fold/cặp, mục tiêu lợi nhuận lưới, ràng buộc rộng và dày, tham số ổn định.
 
 | Cặp | Return gộp | B&H | MDD | MDD B&H | Sharpe gộp [CI 95%] | Tuần lãi | Khuyến nghị dl / dh / n / bước% / mode |
 |---|---|---|---|---|---|---|---|
-| BTC | −41.0% | −26.9% | −48.8% | −55.7% | −1.26 [−2.83, 0.35] | 60% | 2% / 12% / 8 / 1.56% / arithmetic |
-| ETH | −44.2% | −6.0% | −59.2% | −71.4% | −0.79 [−2.40, 0.91] | 65% | 3% / 2% / 4 / 1.26% / geometric |
-| PAXG | −16.1% | +23.9% | −25.7% | −30.8% | −0.63 [−2.05, 0.79] | 65% | 2% / 0.5% / 4 / 0.62% / arithmetic (UNSTABLE) |
-| XAUT | −15.4% | +23.6% | −26.5% | −30.5% | −0.63 [−2.10, 0.82] | 68% | 1.5% / 0.5% / 4 / 0.50% / geometric |
+| BTC | −26.7% | −26.9% | −36.3% | −55.7% | −0.98 [−2.55, 0.68] | 57% | 12% / 12% / 20 / 1.21% / geometric |
+| ETH | −19.8% | −6.0% | −48.7% | −71.4% | −0.30 [−1.98, 1.47] | 65% | 12% / 12% / 15 / 1.43% / arithmetic |
+| PAXG | −4.8% | +23.9% | −16.0% | −30.8% | −0.26 [−1.70, 1.08] | 64% | 12% / 0.5% / 15 / 0.83% / arithmetic |
+| XAUT | −2.6% | +23.6% | −14.0% | −30.5% | −0.12 [−1.54, 1.27] | 61% | 12% / 0.5% / 15 / 0.83% / arithmetic |
 
-**Kết luận (trên lõi đã sửa, mục tiêu lợi nhuận lưới):**
-- Lưới **tạo ra lợi nhuận chênh lệch giá thật** (dương ở 4/4 cặp), nhưng phần vị thế chưa ghép đang ăn hết và hơn thế; tổng không vượt B&H ở cặp nào về lợi nhuận gộp.
-- Chưa có bằng chứng thống kê về edge; vàng kém B&H có ý nghĩa thống kê.
-- **Vấn đề nằm ở rủi ro vị thế**, không ở khả năng khớp lệnh: tối ưu chỉ lợi nhuận lưới mà không kiểm soát vị thế chọn range hẹp, dễ bị phá biên. Hướng xử lý tiếp theo: ràng buộc range (như Yeh et al.: mỗi phía ≥ 5%) hoặc đưa phạt vị thế/drawdown vào bước chọn tham số ổn định.
+**Kết luận (lõi đã sửa, lưới rộng và dày):**
+- Lưới rộng và dày **giảm rủi ro rõ rệt và phủ một phần các tuần sập**: MDD gộp còn −14% đến −49% (giữ coin −31% đến −71%), lợi suất gộp BTC ngang giữ coin (−26.7% so với −26.9%) dù MDD thấp hơn 19 điểm %.
+- **Chưa vượt giữ coin về lợi nhuận ở ETH và vàng**: vàng đi lên +24% mà lưới bán sớm; lưới mặc định không tối ưu (±10%, n=20) vẫn ngang hoặc nhỉnh hơn tối ưu ở vàng (tổng/tuần +0.015% và +0.009% so với −0.061% và −0.029%).
+- **Chưa có bằng chứng thống kê về edge:** CI Sharpe chứa 0 ở cả 4 cặp. Phần cải thiện là kiểm soát rủi ro, không phải alpha.
+- Hướng tiếp theo: mô phỏng re-range khi giá phá đáy (đưa USDT dư vào lưới mới thấp hơn) thay vì reset cứng theo tuần; thêm tham số vốn để lại (`idle`) và phí dự trữ để khớp bot thật.
 
 **Trần số lưới:** `--max-grids N` (mặc định `MAX_GRIDS = 100`, cần xác minh trong app Bitget) lọc `n ≤ N` ở mọi bước (sweep, walk-forward, stats, pipeline cuối). Không gian tìm kiếm quét `n ∈ {4, 6, 8, 10, 15, 20, 30, 40, 60, 80, 100}`; `n` khuyến nghị hiện là 6–20, nên trần 100 không phải ràng buộc đang cắn.
 

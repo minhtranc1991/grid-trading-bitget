@@ -16,7 +16,7 @@ def test_sweep_filters_and_sorted():
     P = 100 + 5 * np.sin(np.linspace(0, 60, 3000))
     fee = 0.001
     space = {"dl": [0.02, 0.05, 0.1], "dh": [0.02, 0.05, 0.1], "n": [4, 10, 40, 500], "mode": ["arithmetic", "geometric"]}
-    r = g.sweep(P, space, fee, safety=2, min_trades=20, max_grids=100)
+    r = g.sweep(P, space, fee, safety=2, min_trades=20, max_grids=100, min_dl=0, min_range=0, min_n=0)
     assert len(r) > 0
     assert r.score.is_monotonic_decreasing  # mặc định sắp theo lợi nhuận lưới (mục tiêu)
     assert np.allclose(r.score, r.grid_wk)  # mặc định tối ưu lợi nhuận lưới
@@ -26,7 +26,7 @@ def test_sweep_filters_and_sorted():
 
 
 def test_space_for_gold_vs_crypto():
-    assert max(g.space_for("PAXGUSDT")["dl"]) == 0.08
+    assert max(g.space_for("PAXGUSDT")["dl"]) == 0.20  # mở rộng để đủ cho ràng buộc dl >= 10%
     assert max(g.space_for("BTCUSDT")["dl"]) == 0.50
 
 
@@ -57,5 +57,15 @@ def test_objective_selects_top_by_that_metric():
     P = 100 + 5 * np.sin(np.linspace(0, 60, 3000))
     space = {"dl": [0.02, 0.05, 0.1], "dh": [0.02, 0.05, 0.1], "n": [4, 10, 20], "mode": ["arithmetic", "geometric"]}
     for obj, col in (("grid", "grid_wk"), ("return", "return"), ("sharpe", "sharpe"), ("sortino", "sortino"), ("calmar", "calmar")):
-        r = g.sweep(P, space, 0.001, objective=obj)
+        r = g.sweep(P, space, 0.001, objective=obj, min_dl=0, min_range=0, min_n=0)
         assert r.iloc[0][col] == r[col].max()
+
+
+def test_wide_dense_constraints_filter_combinations():
+    P = 100 + 5 * np.sin(np.linspace(0, 60, 3000))
+    space = {"dl": [0.02, 0.05, 0.10, 0.15], "dh": [0.02, 0.05, 0.10], "n": [4, 10, 15, 20], "mode": ["arithmetic", "geometric"]}
+    r = g.sweep(P, space, 0.001, min_dl=0.10, min_range=0.15, min_n=14)
+    assert len(r) > 0
+    assert (r.dl >= 0.10 - 1e-12).all() and ((r.dl + r.dh) >= 0.15 - 1e-12).all() and (r.n >= 14).all()
+    free = g.sweep(P, space, 0.001, min_dl=0, min_range=0, min_n=0)
+    assert len(free) > len(r)

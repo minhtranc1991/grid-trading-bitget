@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import grid_optimizer as g
 
 SPACE = {"dl": [0.02, 0.05, 0.1], "dh": [0.02, 0.05, 0.1], "n": [4, 10, 20], "mode": ["arithmetic", "geometric"]}
-WIN = dict(train_days=28, test_days=7, step_days=7, select_days=7)  # IS 4 tuần, OOS 1 tuần, forward 1 tuần
+WIN = dict(train_days=28, test_days=7, step_days=7, select_days=7, min_dl=0, min_range=0, min_n=0)  # tắt ràng buộc rộng/dày cho không gian nhỏ  # IS 4 tuần, OOS 1 tuần, forward 1 tuần
 
 
 def _df(seed=0, days=150):
@@ -52,7 +52,7 @@ def test_stable_pick_is_good_in_both_windows():
     # ứng viên có Sharpe IS cao nhất nhưng tệ ở OOS phải bị bỏ khi có ứng viên đều tốt ở cả hai
     P_is = 100 + 5 * np.sin(np.linspace(0, 60, 2688))
     P_sel = 100 + 5 * np.sin(np.linspace(0, 20, 672))
-    res = g.sweep(P_is, SPACE, 0.001)
+    res = g.sweep(P_is, SPACE, 0.001, min_dl=0, min_range=0, min_n=0)
     st = g.stable_pick(res, SPACE, P_sel, 0.001, g.BARS_PER_YEAR["15m"])
     assert st["score"] == min(st["is_score"], st["sel_score"])  # score = lợi suất quy về tuần (mục tiêu mặc định)
     top = res.iloc[0]
@@ -85,3 +85,13 @@ def test_parallel_equals_serial():
     a = g.walk_forward(df, "15m", "BTCUSDT", space=SPACE, jobs=1, **WIN)
     b = g.walk_forward(df, "15m", "BTCUSDT", space=SPACE, jobs=2, **WIN)
     pd.testing.assert_frame_equal(a, b)
+
+
+def test_constraints_respected_in_walk_forward():
+    sp = {"dl": [0.05, 0.10, 0.15], "dh": [0.02, 0.05, 0.10], "n": [6, 14, 20], "mode": ["arithmetic", "geometric"]}
+    f = g.walk_forward(_df(), "15m", "BTCUSDT", space=sp, with_dgt=False, train_days=28, test_days=7, step_days=7, select_days=7,
+                       min_dl=0.10, min_range=0.15, min_n=14)
+    assert len(f) > 5
+    for pre in ("", "f_", "s_"):
+        assert (f[pre + "dl"] >= 0.10 - 1e-12).all() and ((f[pre + "dl"] + f[pre + "dh"]) >= 0.15 - 1e-12).all() and (f[pre + "n"] >= 14).all()
+    assert {"s_oos_brk", "def_brk"} <= set(f.columns)

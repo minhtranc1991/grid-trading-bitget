@@ -72,6 +72,10 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
 .hero b { display:block; font-size:28px; line-height:1.2; font-variant-numeric:tabular-nums; }
 .hero span { color:var(--ink2); font-size:13px; }
 .dleg { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:13px; color:var(--ink2); margin:6px 0; } .dleg i { display:inline-block; width:12px; height:10px; border-radius:2px; margin-right:6px; }
+.card.collapsed > *:not(h2):not(.csum):not(.ctoggle) { display:none !important; }
+.csum { display:none; background:var(--bg); border-radius:8px; padding:8px 12px; font-size:14px; margin-top:6px; }
+.card.collapsed > .csum { display:block; }
+.ctoggle { margin-left:8px; font-size:12px; padding:2px 10px; }
 .hero .good b { color:var(--s3); } .hero .warn b { color:var(--s4); } .hero .bad b { color:var(--neg); }
 .steps { counter-reset:st; list-style:none; padding:0; margin:8px 0; }
 .steps li { counter-increment:st; padding:6px 0 6px 34px; position:relative; font-size:14px; }
@@ -81,7 +85,7 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
 </head>
 <body>
 <main>
-  <button id="theme" title="Đổi sáng/tối">◐ Theme</button>
+  <button id="theme" title="Đổi sáng/tối">◐ Theme</button><button id="expandAll" title="Mở rộng tất cả mục">Mở rộng tất cả</button><button id="collapseAll" title="Thu gọn tất cả mục, chỉ giữ tóm tắt">Thu gọn tất cả</button>
   <h1>Grid Opt · Báo cáo dữ liệu & log</h1>
   <p class="sub" id="meta"></p>
   <div class="kpis" id="kpis"></div>
@@ -309,8 +313,10 @@ function render() {
   renderStats();
   renderFinal();
   renderDecomp();
+  renderCoverage();
   renderHighlights();
   renderInsights();
+  setupCollapse();
 }
 
 function wfChart(f) {
@@ -590,7 +596,7 @@ function renderHighlights() {
       <li><b>Dữ liệu sạch:</b> 4 cặp, ${D.met[SYMS[0]].bars.toLocaleString()} nến ${D.tf} mỗi cặp, ${((D.span[1] - D.span[0]) / 864e5).toFixed(0)} ngày, ${gaps} nến thiếu; phí 0.1% mỗi chiều xác minh từ app Bitget.</li>
       <li><b>Mô phỏng lưới đúng cơ chế thật:</b> mỗi slot mua ở vạch dưới, bán ở vạch trên kế tiếp, có trễ; đối chiếu với một mô phỏng sổ lệnh limit viết độc lập, sai số &lt; 1e-9.</li>
       <li><b>Kiểm định ngoài mẫu nghiêm ngặt:</b> IS ${fs ? fs.cfg.is_days : 28} ngày tìm tham số, OOS ${fs ? fs.cfg.sel_days : 7} ngày chọn tham số ổn định, forward ${fs ? fs.cfg.fwd_days : 7} ngày đo hiệu suất, trượt hàng tuần; có test chống rò rỉ dữ liệu.</li>
-      <li><b>Tối ưu theo lợi suất thuần</b> và báo cáo đồng thời Sharpe, Sortino, Calmar để xem góc nhìn rủi ro.</li>
+      <li><b>Tách lợi suất làm hai phần:</b> lợi nhuận lưới (mua-bán ghép cặp, là mục tiêu tối ưu) và lợi nhuận vị thế chưa ghép (giống Buy &amp; Hold); báo cáo thêm Sharpe, Sortino, Calmar để xem góc nhìn rủi ro.</li>
       <li><b>Thống kê trung thực:</b> khoảng tin cậy bootstrap theo khối, Deflated Sharpe sau khi tính hàng nghìn tổ hợp, độ nhạy với phí và khung nến.</li>
       <li><b>Một lệnh chạy hết:</b> <code>python grid_optimizer.py</code> chạy song song 8 tiến trình, tự cập nhật báo cáo này.</li>
     </ol>
@@ -642,6 +648,77 @@ function renderDecomp() {
     <table><tr><th>Cặp</th><th>Lưới / tuần</th><th>Vị thế / tuần</th><th>Tổng / tuần</th><th>B&amp;H / tuần</th><th>Chu kỳ khép kín / ngày</th><th>Bước lưới / ATR ngày</th></tr>` +
     rows.map((q) => `<tr><td>${q.sym}</td><td>${q.grid >= 0 ? "+" : ""}${q.grid.toFixed(3)}%</td><td>${q.inv >= 0 ? "+" : ""}${q.inv.toFixed(3)}%</td><td>${q.tot >= 0 ? "+" : ""}${q.tot.toFixed(3)}%</td><td>${q.bh >= 0 ? "+" : ""}${q.bh.toFixed(3)}%</td><td>${q.cyc.toFixed(2)}</td><td>${(stepOf(q.sym) / atr(q.sym) * 100).toFixed(0)}%</td></tr>`).join("") +
     `</table><p class="note"><b>Tỷ lệ khớp (fill rate)</b> phụ thuộc vào biến động: mỗi vòng khép kín cần giá đi từ vạch này sang vạch kế tiếp rồi quay lại. Bước lưới càng nhỏ so với ATR ngày thì lưới khớp càng nhiều, nhưng mỗi vòng lãi ít hơn và phí chiếm tỷ trọng lớn hơn.</p>`;
+}
+
+// ---------- Thu gọn / mở rộng từng mục (thu gọn = chỉ giữ tóm tắt ý chính) ----------
+let COLLAPSED = new Set();
+try { COLLAPSED = new Set(JSON.parse(localStorage.getItem("report.collapsed") || "[]")); } catch (e) { /* không có localStorage */ }
+const saveCollapsed = () => { try { localStorage.setItem("report.collapsed", JSON.stringify([...COLLAPSED])); } catch (e) { /* bỏ qua */ } };
+
+function sectionSummaries() {
+  const s1 = (s) => s.replace("USDT", ""), mean = (a) => { const v = a.filter((x) => x != null); return v.reduce((p, q) => p + q, 0) / v.length; };
+  const S = D.summary, fs = D.fold_sched, out = {};
+  const ends = SYMS.map((s) => [s, D.px[s][D.px[s].length - 1] - 100]);
+  out["1"] = () => ends.map(([s, v]) => `${s1(s)} ${pct(v, 0)}`).join(", ") + " (đầu kỳ = 100).";
+  out["2"] = () => "MDD giữ coin: " + SYMS.map((s) => `${s1(s)} ${(D.met[s].mdd * 100).toFixed(0)}%`).join(", ") + ".";
+  out["3"] = () => "ATR(14) trung bình: " + SYMS.map((s) => `${s1(s)} ${mean(D.atr[s]).toFixed(1)}%`).join(", ") + " mỗi ngày.";
+  out["4"] = () => "Đuôi dày: excess kurtosis " + SYMS.map((s) => `${s1(s)} ${D.dstat[s].kurt.toFixed(1)}`).join(", ") + " (chuẩn = 0).";
+  out["5"] = () => `STRESS khoảng ${(mean(SYMS.map((s) => D.regime[s].n_stress / D.regime[s].n)) * 100).toFixed(0)}% số ngày (|z| > ${D.stress_z} so với ${D.reg_win} ngày trước), tụ thành cụm.`;
+  out["6"] = () => SYMS.map((s) => `${s1(s)}: ${pct(D.met[s].return * 100, 0)}, Sharpe ${D.met[s].sharpe.toFixed(2)}`).join("; ") + ".";
+  out["7"] = () => { let best = null, worst = null; SYMS.forEach((s) => D.mret[s].forEach((v, i) => { if (v == null) return; const o = { s, m: D.months[i].replace("*", ""), v }; if (!best || v > best.v) best = o; if (!worst || v < worst.v) worst = o; })); return `Tháng tốt nhất ${s1(best.s)} ${best.m} (${pct(best.v, 0)}), tệ nhất ${s1(worst.s)} ${worst.m} (${pct(worst.v, 0)}).`; };
+  out["8"] = () => `BTC–ETH ${D.corr[0][1].toFixed(2)}, PAXG–XAUT ${D.corr[2][3].toFixed(2)}: thực chất chỉ có hai nguồn thông tin độc lập.`;
+  out["9"] = () => fs ? `${fs.n} fold: IS ${fs.cfg.is_days} ngày, OOS ${fs.cfg.sel_days} ngày, forward ${fs.cfg.fwd_days} ngày, trượt ${fs.cfg.step_days} ngày.` : "Chưa có kết quả walk-forward.";
+  out["10"] = () => S && S.every((r) => r.grid_wk_mean != null) ? "Mỗi tuần (lưới / vị thế / tổng): " + S.map((r) => `${s1(r.symbol)} ${pct(r.grid_wk_mean * 100, 2)} / ${pct(r.inv_wk_mean * 100, 2)} / ${pct(r.tot_wk_mean * 100, 2)}`).join("; ") + "." : "Chưa có kết quả.";
+  out["11"] = () => { if (!S) return "Chưa có kết quả."; const z = S.filter((r) => r.sharpe_ci_lo <= 0 && r.sharpe_ci_hi >= 0).length; return `${z}/${S.length} cặp có khoảng tin cậy Sharpe chứa 0: chưa đủ bằng chứng thống kê về lợi thế.`; };
+  out["12"] = () => S ? S.map((r) => `${s1(r.symbol)}: ${verdict(r, D.wf[r.symbol]).badge[1]}`).join("; ") + "." : "Chưa có kết quả.";
+  out["13"] = () => { const r = D.runs[D.runs.length - 1]; return `${D.runs.length} lần chạy đã ghi${r ? `; gần nhất ${r.t}` : ""}.`; };
+  return out;
+}
+
+function setupCollapse() {
+  document.querySelectorAll(".ctoggle, .csum").forEach((e) => e.remove());
+  const sums = sectionSummaries();
+  document.querySelectorAll("section.card").forEach((sec) => {
+    const h = sec.querySelector("h2"), m = h && h.textContent.trim().match(/^(\d+)\./);
+    if (!m) return;
+    const num = m[1], col = COLLAPSED.has(num);
+    sec.classList.toggle("collapsed", col);
+    const b = document.createElement("button");
+    b.className = "ctoggle"; b.textContent = col ? "Mở rộng" : "Thu gọn";
+    b.onclick = () => { col ? COLLAPSED.delete(num) : COLLAPSED.add(num); saveCollapsed(); render(); };
+    h.appendChild(b);
+    const s = document.createElement("div");
+    s.className = "csum";
+    let txt = "";
+    try { txt = sums[num] ? sums[num]() : ""; } catch (e) { txt = ""; }
+    s.innerHTML = `<b>Tóm tắt:</b> ${txt}`;
+    h.insertAdjacentElement("afterend", s);
+  });
+}
+
+function renderCoverage() {
+  const have = SYMS.filter((s) => D.ab && D.ab[s]);
+  if (!have.length) return;
+  const c0 = D.ab[have[0]].constraints, pc = (v, d = 2) => (v >= 0 ? "+" : "") + (v * 100).toFixed(d) + "%";
+  const row = (s, label, a, b, fmt) => `<tr><td>${label}</td><td>${fmt(a)}</td><td>${fmt(b)}</td></tr>`;
+  const cards = have.map((s) => {
+    const A = D.ab[s].constrained, B = D.ab[s].free, i = SYMS.indexOf(s);
+    return `<div class="vcard"><h3><span class="tag" style="background:${COL[i]};color:#fff">${s}</span></h3>
+      <table><tr><th></th><th>Lưới rộng và dày</th><th>Tự do</th></tr>` +
+      row(s, "Tổng / tuần", A.tot_wk, B.tot_wk, (v) => pc(v)) + row(s, "Lưới / tuần", A.grid_wk, B.grid_wk, (v) => pc(v)) + row(s, "Vị thế / tuần", A.inv_wk, B.inv_wk, (v) => pc(v)) +
+      row(s, `Tuần sập (${A.crash_n} tuần): lợi suất TB`, A.crash_ret, B.crash_ret, (v) => pc(v, 1)) +
+      row(s, "Tuần giá phá đáy lưới", A.breach, B.breach, (v) => (v * 100).toFixed(0) + "%") +
+      row(s, "MDD gộp", A.pooled_mdd, B.pooled_mdd, (v) => (v * 100).toFixed(1) + "%") +
+      row(s, "Lợi suất gộp", A.pooled_return, B.pooled_return, (v) => (v * 100).toFixed(1) + "%") +
+      row(s, "Chu kỳ khép kín / ngày", A.cycles_day, B.cycles_day, (v) => v.toFixed(2)) +
+      row(s, "Tham số trung vị (dl / dh / n)", A, B, (v) => `${(v.dl_med * 100).toFixed(0)}% / ${(v.dh_med * 100).toFixed(0)}% / ${v.n_med.toFixed(0)}`) +
+      `</table><p class="note">B&amp;H trong các tuần sập: ${pc(A.bh_crash_ret, 1)}.</p></div>`;
+  }).join("");
+  const el = document.createElement("div");
+  el.innerHTML = `<h2 style="font-size:15px;margin-top:22px">Lưới rộng và dày: phủ một phần các tuần giá sập</h2>
+    <div class="callout"><b>Ràng buộc đang áp dụng</b>: phủ ít nhất <b>${(c0.min_dl * 100).toFixed(0)}%</b> phía dưới giá đầu (có sẵn lệnh mua khi giá rơi), tổng độ rộng ≥ <b>${(c0.min_range * 100).toFixed(0)}%</b>, từ <b>${c0.min_n}</b> lưới trở lên, kèm bước ≥ 0.4%. Số liệu lấy từ các bot Bitget thật (phạm vi 12–26%, 14–34 lưới). "Tuần sập" là tuần mà giữ coin giảm hơn ${Math.abs(c0.crash_th * 100).toFixed(0)}%. Cột "Tự do" là cùng quy trình nhưng không ràng buộc.</div>
+    <div class="row2">${cards}</div>`;
+  $("decomp").appendChild(el);
 }
 
 function addInsight(prefix, html) {
@@ -697,6 +774,8 @@ function renderInsights() {
   }
 }
 
+$("collapseAll").onclick = () => { for (let i = 1; i <= 13; i += 1) COLLAPSED.add(String(i)); saveCollapsed(); render(); };
+$("expandAll").onclick = () => { COLLAPSED.clear(); saveCollapsed(); render(); };
 $("theme").onclick = () => {
   const el = document.documentElement, dark = el.dataset.theme ? el.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
   el.dataset.theme = dark ? "light" : "dark"; render();

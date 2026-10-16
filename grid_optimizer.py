@@ -16,7 +16,8 @@ URL = "https://api.bitget.com/api/v2/spot/market/history-candles"
 GRAN = {"1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "1h": "1h", "4h": "4h"}
 BAR_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "4h": 14_400_000}
 PAGE = 200  # history-candles limit tối đa (đã thử: 1000 -> lỗi 40020)
-LOG_PATH = Path(__file__).parent / "results" / "run.log"
+RESULTS_DIR = Path(__file__).parent / "results"  # tests đổi sang thư mục tạm để không ghi đè kết quả thật
+LOG_PATH = RESULTS_DIR / "run.log"
 log = logging.getLogger("grid")
 COLS = ["ts", "open", "high", "low", "close", "base_vol", "quote_vol"]
 
@@ -141,7 +142,8 @@ def grid_sim_x(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True)
     if entry_fee:
         eq[1:] -= fee * coins0 * p0 / cap  # phí mua coin lúc vào lưới
     gpn = gp / cap
-    return eq, trades, float(notional / cap), {"grid_profit": gpn, "cycles": cycles, "inv_pnl": float(eq[-1] - 1 - gpn)}
+    return eq, trades, float(notional / cap), {"grid_profit": gpn, "cycles": cycles, "inv_pnl": float(eq[-1] - 1 - gpn),
+                                                "broke_low": bool(P.min() < low), "broke_high": bool(P.max() > high)}
 
 
 def grid_sim(prices, low, high, n, mode="arithmetic", fee=0.0, entry_fee=True):
@@ -182,6 +184,7 @@ def metrics(equity, bars_per_year, trades=0, turnover=0.0, extra=None):
     return {
         "grid": gp, "grid_wk": gp * wk, "inv": ret - gp, "inv_wk": (ret - gp) * wk,
         "cycles": extra["cycles"] if extra else nan, "cycles_day": (extra["cycles"] / days) if extra else nan,
+        "broke_low": float(extra["broke_low"]) if extra else nan, "broke_high": float(extra["broke_high"]) if extra else nan,
         "fills_day": trades / days,
         "sharpe": float(r.mean() / sd * np.sqrt(bars_per_year)) if sd > 0 else 0.0,
         "sortino": float(r.mean() / dd * np.sqrt(bars_per_year)) if dd > 0 else 0.0,
@@ -207,9 +210,14 @@ def buy_and_hold(prices):
 # --- STEP 4: quét tham số trên một cửa sổ (IN-SAMPLE, chưa dùng để kết luận) ---
 MAX_GRIDS = 100  # cần xác minh: docs Bitget không nêu giới hạn số lưới (xem UI từng cặp)
 DEFAULT_FEE = 0.001  # cần xác minh: 0.1%/chiều theo ảnh app 2026-10-15
+# Ràng buộc "lưới rộng và dày" (bot Bitget thật trong ảnh: phạm vi 12-26%, 14-34 lưới) để lưới phủ một phần các tuần giá sập:
+MIN_DL = 0.10  # phủ ít nhất 10% phía DƯỚI giá đầu: có sẵn lệnh mua khi giá rơi (đặt 0 để tắt)
+MIN_RANGE = 0.12  # tổng độ rộng dl + dh
+MIN_N = 14  # số lưới tối thiểu
+CRASH_TH = -0.05  # tuần "sập": Buy & Hold giảm hơn 5%
 N_LIST = [4, 6, 8, 10, 15, 20, 30, 40, 60, 80, 100]
 D_CRYPTO = [0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.50]
-D_GOLD = [0.0025, 0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.08]
+D_GOLD = [0.0025, 0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.08, 0.12, 0.15, 0.20]
 GOLD = ("PAXGUSDT", "XAUTUSDT")
 
 
@@ -225,15 +233,24 @@ def step_pct(low, high, n, mode):
     return (high / low) ** (1 / n) - 1
 
 
-def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, min_trades=20, max_grids=MAX_GRIDS, objective=None):
-    """Quét lưới tham số, trả DataFrame sắp theo score (chỉ số mục tiêu) giảm dần. IN-SAMPLE."""
+def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, min_trades=20, max_grids=MAX_GRIDS, objective=None,
+          min_dl=None, min_range=None, min_n=None):
+    """Quét lưới tham số, trả DataFrame sắp theo score (chỉ số mục tiêu) giảm dần. IN-SAMPLE.
+    Ràng buộc lưới rộng và dày: dl >= min_dl, dl + dh >= min_range, n >= min_n (mặc định MIN_DL, MIN_RANGE, MIN_N)."""
+    min_dl = MIN_DL if min_dl is None else min_dl
+    min_range = MIN_RANGE if min_range is None else min_range
+    min_n = MIN_N if min_n is None else min_n
     P = np.asarray(prices, float)
     p0, rows = P[0], []
     for dl in space["dl"]:
+        if dl < min_dl - 1e-12:
+            continue
         for dh in space["dh"]:
+            if dl + dh < min_range - 1e-12:
+                continue
             low, high = p0 * (1 - dl), p0 * (1 + dh)
             for n in space["n"]:
-                if n > max_grids:
+                if n > max_grids or n < min_n:
                     continue
                 for mode in space["mode"]:
                     st = step_pct(low, high, n, mode)
@@ -289,7 +306,7 @@ def run_sweep(symbol, tf, df, window_days, fee, max_grids=MAX_GRIDS):
     print(f"B&H cùng cửa sổ: sharpe={bh['sharpe']:.2f} return={bh['return']:+.1%} mdd={bh['mdd']:.1%}")
     print("BOTTOM 5")
     print(res.tail(5).to_string(formatters=fmt))
-    out = Path(__file__).parent / "results" / f"heatmap_{symbol[:-4]}.png"
+    out = RESULTS_DIR / f"heatmap_{symbol[:-4]}.png"
     meta = {"window_days": window_days, "fee": fee, "combos": total, "passed": len(res), "bh": bh,
             "rows": res.to_dict("records")}
     (out.parent / f"sweep_{symbol}.json").write_text(json.dumps(meta), encoding="utf-8")  # cho make_report.py
@@ -444,9 +461,9 @@ JOBS = 1  # số tiến trình chạy song song các fold (CLI --jobs đặt m�
 
 def _wf_fold(t):
     """Một fold độc lập (chạy được trong tiến trình con): IS -> OOS chọn tham số ổn định -> forward."""
-    k, tr, sel, te, ts_bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective = t
+    k, tr, sel, te, ts_bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective, cons = t
     bpy = BARS_PER_YEAR[tf]
-    res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids, objective=objective)
+    res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids, objective=objective, min_dl=cons[0], min_range=cons[1], min_n=cons[2])
     if res.empty:
         return k, None
     best = res.iloc[0]  # đỉnh in-sample
@@ -470,6 +487,8 @@ def _wf_fold(t):
         ex.update({p + "_sortino": m_["sortino"], p + "_calmar": m_["calmar"], p + "_retwk": m_["ret_wk"],
                    p + "_gridwk": m_["grid_wk"], p + "_invwk": m_["inv_wk"], p + "_cycday": m_["cycles_day"]})
     ex["bh_gridwk"], ex["bh_invwk"], ex["bh_cycday"] = 0.0, bh["ret_wk"], 0.0  # giữ coin: toàn bộ là vị thế
+    for p, m_ in (("oos", oos), ("f_oos", foos), ("s_oos", soos), ("def", dfl)):
+        ex[p + "_brk"] = m_["broke_low"]  # 1 nếu giá tuần đó phá xuống dưới đáy lưới
     is_first, is_last, sel_last, t_start, t_end = ts_bounds
     return k, {
         "fold": k, "is_start": is_first, "is_last_ts": is_last, "train_last_ts": sel_last, "test_start": t_start, "test_end": t_end,
@@ -489,7 +508,8 @@ def _wf_fold(t):
 
 
 def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, step_days=7, space=None, safety=2.0,
-                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K, jobs=None, objective=None):
+                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K, jobs=None, objective=None,
+                 min_dl=None, min_range=None, min_n=None):
     """Mỗi fold (trượt step_days):
       IS     [a, b)  : sweep, tìm tham số tối ưu (đỉnh nhọn và phẳng)
       OOS    [b, s)  : chấm các ứng viên của IS, chọn tham số ổn định (tốt ở cả IS và OOS)
@@ -498,6 +518,7 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, st
     select_days = SELECT_DAYS if select_days is None else select_days
     jobs = JOBS if jobs is None else jobs
     objective = OBJECTIVE if objective is None else objective
+    cons = (MIN_DL if min_dl is None else min_dl, MIN_RANGE if min_range is None else min_range, MIN_N if min_n is None else min_n)
     ts, px = df.ts.values, df.close.values
     space, tasks, k = space or space_for(symbol), [], 0
     while True:
@@ -509,7 +530,7 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, st
             break
         i0, i1, i2, i3 = np.searchsorted(ts, [a, b, s_end, c])
         bounds = (int(ts[i0]), int(ts[i1 - 1]), int(ts[i2 - 1]), int(ts[i2]), int(ts[i3 - 1]))
-        tasks.append((k, px[i0:i1], px[i1:i2], px[i2:i3], bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective))
+        tasks.append((k, px[i0:i1], px[i1:i2], px[i2:i3], bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective, cons))
         k += 1
     if jobs > 1 and len(tasks) > 1:
         out = list(_get_pool(jobs).map(_wf_fold, tasks))
@@ -522,6 +543,18 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, st
         else:
             rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _crash_stats(f):
+    """Các tuần forward 'sập' (B&H giảm hơn CRASH_TH): lợi suất của từng cách chọn và tỷ lệ tuần giá phá đáy lưới."""
+    nan = float("nan")
+    mask = f.bh_return < CRASH_TH
+    out = {"crash_n": int(mask.sum()), "bh_crash_ret": float(f.bh_return[mask].mean()) if mask.any() else nan}
+    for b in ("def", "oos", "f_oos", "s_oos"):
+        out[f"{b}_crash_ret"] = float(f[f"{b}_return"][mask].mean()) if mask.any() else nan
+        out[f"{b}_breach"] = float(f[f"{b}_brk"].mean()) if f"{b}_brk" in f else nan
+        out[f"{b}_breach_crash"] = float(f[f"{b}_brk"][mask].mean()) if (f"{b}_brk" in f and mask.any()) else nan
+    return out
 
 
 def wf_summary(f):
@@ -547,13 +580,14 @@ def wf_summary(f):
             **{f"{b}_{k}_median": (med(f"{b}_{k}") if f"{b}_{k}" in f else float("nan"))
                for b in ("bh", "def", "oos", "f_oos", "s_oos", "dgt", "dgtdef") for k in ("retwk", "sortino", "calmar")},
             **{f"{b}_{k}_{a}": (float(getattr(f[f"{b}_{k}"], a)()) if f"{b}_{k}" in f else float("nan"))
-               for b in ("bh", "def", "oos", "f_oos", "s_oos") for k in ("gridwk", "invwk", "cycday", "retwk") for a in ("median", "mean")}}
+               for b in ("bh", "def", "oos", "f_oos", "s_oos") for k in ("gridwk", "invwk", "cycday", "retwk") for a in ("median", "mean")},
+            **_crash_stats(f)}
 
 
 def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
     t0 = time.time()
     f = walk_forward(df, tf, symbol, fee, train, test, step, max_grids=max_grids)
-    out = Path(__file__).parent / "results" / f"{symbol}_folds.csv"
+    out = RESULTS_DIR / f"{symbol}_folds.csv"
     out.parent.mkdir(exist_ok=True)
     f.to_csv(out, index=False)
     s = wf_summary(f)
@@ -638,7 +672,7 @@ def run_stats(symbol, tf, df, fee, train=28, test=7, step=7, window=90, max_grid
     out = {"symbol": symbol, "tf": tf, "fee": fee, "folds": len(f), "bars": int(len(gr)), "n_trials": ntr,
            "grid_ci": ci_g, "bh_ci": ci_b, "diff_ci": ci_d, "psr0": psr, "dsr": dsr, "sr0_bar": sr0,
            "sr0_annual": sr0 * np.sqrt(bpy), "verdict": verdict}
-    path = Path(__file__).parent / "results" / f"stats_{symbol}.json"
+    path = RESULTS_DIR / f"stats_{symbol}.json"
     path.write_text(json.dumps(out), encoding="utf-8")
     log.info("STATS %s: Sharpe OOS %.2f [%.2f, %.2f], B&H %.2f [%.2f, %.2f], hiệu %.2f [%.2f, %.2f]; PSR(0)=%.3f DSR=%.3f, %d tổ hợp; %s",
              symbol, ci_g[1], ci_g[0], ci_g[2], ci_b[1], ci_b[0], ci_b[2], ci_d[1], ci_d[0], ci_d[2], psr, dsr, ntr, verdict)
@@ -658,8 +692,32 @@ def run_sensitivity(symbol, days, fee, fees=(0.5, 1.0, 2.0), tfs=("5m", "15m", "
         s = base if tf == "15m" and base else wf_summary(walk_forward(load_ohlcv(symbol, tf, days), tf, symbol, fee, with_dgt=False, max_grids=max_grids))
         rows.append({"kind": "tf", "label": tf, **{k: s[k] for k in ("s_oos_sharpe_median", "f_oos_sharpe_median", "oos_sharpe_median", "bh_sharpe_median", "s_oos_retwk_median", "bh_retwk_median", "s_pct_profit", "folds")}})
         log.info("SENS %s tf %s: stable=%.2f flat=%.2f peak=%.2f B&H=%.2f", symbol, tf, s["s_oos_sharpe_median"], s["f_oos_sharpe_median"], s["oos_sharpe_median"], s["bh_sharpe_median"])
-    (Path(__file__).parent / "results" / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")
+    (RESULTS_DIR / f"sens_{symbol}.json").write_text(json.dumps(rows), encoding="utf-8")
     return rows
+
+
+def run_ab(symbol, tf, df, fee, train, test, step, max_grids=MAX_GRIDS):
+    """So sánh có ràng buộc lưới rộng và dày (MIN_DL, MIN_RANGE, MIN_N) với không ràng buộc, cùng dữ liệu và cùng quy trình."""
+    bpy = BARS_PER_YEAR[tf]
+    out = {"constraints": {"min_dl": MIN_DL, "min_range": MIN_RANGE, "min_n": MIN_N, "crash_th": CRASH_TH}}
+    for name, cons in (("constrained", (MIN_DL, MIN_RANGE, MIN_N)), ("free", (0.0, 0.0, 0))):
+        f = walk_forward(df, tf, symbol, fee, train, test, step, with_dgt=False, max_grids=max_grids, min_dl=cons[0], min_range=cons[1], min_n=cons[2])
+        S = wf_summary(f)
+        f["fee"] = fee
+        gr, bh = oos_returns(df, f, "s_")
+        mg = metrics(np.concatenate([[1.0], np.cumprod(1 + gr)]), bpy)
+        out[name] = {"folds": len(f), "grid_wk": S["s_oos_gridwk_mean"], "inv_wk": S["s_oos_invwk_mean"], "tot_wk": S["s_oos_retwk_mean"],
+                     "bh_wk": S["bh_retwk_mean"], "cycles_day": S["s_oos_cycday_median"], "pct_profit": S["s_pct_profit"],
+                     "crash_n": S["crash_n"], "crash_ret": S["s_oos_crash_ret"], "bh_crash_ret": S["bh_crash_ret"], "breach": S["s_oos_breach"],
+                     "breach_crash": S["s_oos_breach_crash"], "pooled_return": mg["return"], "pooled_mdd": mg["mdd"], "pooled_sharpe": mg["sharpe"],
+                     "dl_med": float(f.s_dl.median()), "dh_med": float(f.s_dh.median()), "n_med": float(f.s_n.median()),
+                     "step_med": float(f.s_step_pct.median())}
+    (RESULTS_DIR / f"ab_{symbol}.json").write_text(json.dumps(out), encoding="utf-8")
+    c, fr = out["constrained"], out["free"]
+    log.info("AB %s: tổng/tuần %.3f%% (ràng buộc) vs %.3f%% (tự do); lưới %.3f%% vs %.3f%%; tuần sập %d: %.2f%% vs %.2f%% (B&H %.2f%%); phá đáy %.0f%% vs %.0f%%; MDD gộp %.1f%% vs %.1f%%",
+             symbol, 100 * c["tot_wk"], 100 * fr["tot_wk"], 100 * c["grid_wk"], 100 * fr["grid_wk"], c["crash_n"], 100 * c["crash_ret"], 100 * fr["crash_ret"],
+             100 * c["bh_crash_ret"], 100 * c["breach"], 100 * fr["breach"], 100 * c["pooled_mdd"], 100 * fr["pooled_mdd"])
+    return out
 
 
 # --- STEP 9: pipeline đầy đủ ---
@@ -667,7 +725,7 @@ def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRID
     """Walk-forward + CI + tham số khuyến nghị cho một cặp. Trả (dòng summary, chuỗi equity OOS)."""
     bpy, sp = BARS_PER_YEAR[tf], space_for(symbol)
     f = walk_forward(df, tf, symbol, fee, train, test, step, max_grids=max_grids)
-    out = Path(__file__).parent / "results" / f"{symbol}_folds.csv"
+    out = RESULTS_DIR / f"{symbol}_folds.csv"
     out.parent.mkdir(exist_ok=True)
     f.to_csv(out, index=False)
     f["fee"] = fee
@@ -692,7 +750,10 @@ def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRID
            "oos_sortino": mg["sortino"], "oos_calmar": mg["calmar"], "bh_sortino": mb["sortino"], "bh_calmar": mb["calmar"], "objective": OBJECTIVE,
            "grid_wk_mean": float(f[pre + "oos_gridwk"].mean()), "inv_wk_mean": float(f[pre + "oos_invwk"].mean()),
            "tot_wk_mean": float(f[pre + "oos_retwk"].mean()), "bh_wk_mean": float(f["bh_retwk"].mean()),
-           "cycles_day_median": float(f[pre + "oos_cycday"].median()), "grid_wk_median": float(f[pre + "oos_gridwk"].median()),
+           "cycles_day_median": float(f[pre + "oos_cycday"].median()),
+           "breach_rate": float(f[pre + "oos_brk"].mean()), "crash_weeks": int((f.bh_return < CRASH_TH).sum()),
+           "crash_grid_ret": float(f[pre + "oos_return"][f.bh_return < CRASH_TH].mean()), "crash_bh_ret": float(f.bh_return[f.bh_return < CRASH_TH].mean()),
+           "min_dl": MIN_DL, "min_range": MIN_RANGE, "min_n": MIN_N, "grid_wk_median": float(f[pre + "oos_gridwk"].median()),
            "pct_fold_profit": float((f[pre + "oos_return"] > 0).mean() * 100), "bh_sharpe_pooled": mb["sharpe"],
            "bh_return": mb["return"], "bh_mdd": mb["mdd"], "rec_dl": rec.dl, "rec_dh": rec.dh, "rec_n": int(rec.n),
            "rec_step_pct": rec.step_pct, "rec_mode": rec["mode"], "rec_low": last * (1 - rec.dl), "rec_high": last * (1 + rec.dh),
@@ -707,7 +768,7 @@ def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRID
 
 
 def write_final(rows, series):
-    d = Path(__file__).parent / "results"
+    d = RESULTS_DIR
     pd.DataFrame(rows).to_csv(d / "summary.csv", index=False)
     (d / "oos_equity.json").write_text(json.dumps(series), encoding="utf-8")
     import matplotlib
@@ -743,6 +804,10 @@ def main():
     ap.add_argument("--sweep", action="store_true", help="STEP 4: quét tham số trên cửa sổ cuối (in-sample)")
     ap.add_argument("--window", type=int, default=90, help="số ngày của cửa sổ sweep")
     ap.add_argument("--fee", type=float, default=DEFAULT_FEE)
+    ap.add_argument("--min-dl", type=float, default=MIN_DL, help="phủ ít nhất dl phía dưới giá đầu (0 = tắt)")
+    ap.add_argument("--min-range", type=float, default=MIN_RANGE, help="tổng độ rộng dl + dh tối thiểu (0 = tắt)")
+    ap.add_argument("--min-grids", type=int, default=MIN_N, help="số lưới tối thiểu (0 = tắt)")
+    ap.add_argument("--ab", action="store_true", help="so sánh có ràng buộc và không ràng buộc (ghi results/ab_{SYMBOL}.json)")
     ap.add_argument("--objective", choices=OBJECTIVES, default=OBJECTIVE,
                     help="chỉ số tối ưu (mặc định return = lợi suất thuần); Sharpe/Sortino/Calmar vẫn được báo cáo để tham khảo")
     ap.add_argument("--max-grids", type=int, default=MAX_GRIDS, help="trần số lưới n (cần xác minh trong app Bitget)")
@@ -758,12 +823,13 @@ def main():
     a = ap.parse_args()
     globals()["SELECT_DAYS"] = a.select
     globals()["OBJECTIVE"] = a.objective
+    globals()["MIN_DL"], globals()["MIN_RANGE"], globals()["MIN_N"] = a.min_dl, a.min_range, a.min_grids
     globals()["JOBS"] = max(1, min(a.jobs, 8))
     LOG_PATH.parent.mkdir(exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(process)d] %(message)s",  # PID để tách các lần chạy chồng nhau
                         handlers=[logging.StreamHandler(), logging.FileHandler(LOG_PATH, encoding="utf-8")])
     log.info("RUN args=%s", vars(a))
-    final = not (a.sweep or a.walkforward or a.stats or a.sensitivity)
+    final = not (a.sweep or a.walkforward or a.stats or a.sensitivity or a.ab)
     rows, series = [], {}
     for s in a.symbols:
         df = load_ohlcv(s, a.tf, a.days)
@@ -778,6 +844,8 @@ def main():
             run_stats(s, a.tf, df, a.fee, a.train, a.test, a.step, a.window, a.max_grids)
         if a.sensitivity:
             run_sensitivity(s, a.days, a.fee, max_grids=a.max_grids)
+        if a.ab or final:
+            run_ab(s, a.tf, df, a.fee, a.train, a.test, a.step, a.max_grids)
         if final:
             row, series[s] = run_final(s, a.tf, df, a.fee, a.train, a.test, a.step, a.window, a.max_grids)
             rows.append(row)

@@ -144,6 +144,36 @@ DCA Buy & Hold **thắng grid ở cả 4 cặp** (hơn khoảng 9 điểm % ở 
 - [x] **STEP 8** Đánh giá thống kê: số tổ hợp đã thử, Deflated Sharpe / block bootstrap, độ nhạy phí (0.5×/1×/2×) và timeframe (5m/15m/1h)
 - [x] **STEP 9** CLI đầy đủ + `results/summary.csv` + equity OOS vs B&H + README giới hạn; end-to-end < vài phút, pytest pass
 
+## Quá trình nghiên cứu
+
+Lịch sử git trên `main` là chuỗi merge theo từng giai đoạn; mỗi giai đoạn nêu giả thuyết, thay đổi và kết quả (số liệu chi tiết ở mục Cách dùng).
+
+| # | Giai đoạn (nhánh) | Giả thuyết / vấn đề | Kết quả |
+|---|---|---|---|
+| 1 | STEP 0–4 (`step0`…`step4`) | Dựng dữ liệu, backtest lõi, chỉ số, sweep | Sweep in-sample luôn đẹp (Sharpe cao, đỉnh nhọn) nên chưa kết luận được gì |
+| 2 | STEP 5–9 (`step5-walkforward`…`step9-final`) | Walk-forward, tham số phẳng, DGT, thống kê, pipeline cuối | Pipeline chạy hết, nhưng mô hình grid lõi thiếu lãi theo chu kỳ khép kín nên kết quả không đáng tin |
+| 3 | `fix/grid-pairing` | Viết lại lõi: slot mua L_k, bán L_{k+1}, mô phỏng theo sự kiện cắt line; kiểm chứng bằng mô phỏng sổ lệnh limit độc lập; bỏ giả định interval-matching, thay bằng ràng buộc bước ≥ 0.4% | Lõi khớp tay và khớp mô phỏng độc lập; tối ưu không còn chọn lưới hẹp và dày |
+| 4 | `is-oos-stable`, `parallel-folds` | IS 4 tuần tìm tối ưu → OOS 1 tuần chọn tham số ổn định → forward 1 tuần, trượt tuần (72 fold); chạy 8 tiến trình | Walk-forward một cặp từ 66 giây xuống 8 giây (kết quả y hệt tuần tự) |
+| 5 | `fix/log-pid`, `report-v2` | Log lẫn khi chạy chồng; báo cáo HTML tự cập nhật, ATR(14), regime; sao lưu paper vào `data/refs/papers/` | Báo cáo mỗi lần chạy có insight đi kèm |
+| 6 | `objective-return`, `grid-profit-decomposition` | Tối ưu lợi suất thuần: kết quả chọn cấu hình giữ nhiều coin, suy giảm IS→forward lớn (khoảng 35–95% tùy mục tiêu). Tách lợi suất thành lãi lưới (chu kỳ khép kín) và lợi nhuận vị thế chưa ghép | Mục tiêu `grid` ổn định hơn lợi suất thuần; tách này khớp phép tách trên app Bitget (Lưới + Chưa ghép = Tổng) |
+| 7 | `report-collapse` | Phân tích 10 ảnh bot thật | Bot thật: n lệnh mở = n lưới, chia coin đều, dạng hình học, dư USDT 2–12%, range 12–26%, 14–34 lưới, không cắt lỗ. Tối ưu của ta chọn lưới thưa, hẹp và khớp ít hơn 5–10 lần |
+| 8 | `wide-dense-constraints` | Ép dl ≥ 10%, range ≥ 12%, n ≥ 14 (theo Yeh 2022: mỗi phía tối thiểu 5%) | Tuần phá đáy giảm từ 40–51% xuống 1–8%; lỗ tuần sập giảm khoảng một nửa (BTC −5.6% xuống −3.8%); tổng/tuần tốt hơn ở cả 4 cặp |
+| 9 | `rerange-dca` | Re-range khi phá đáy; DCA $50 mỗi tháng, lệnh grid tối thiểu $2, so với DCA Buy & Hold | Re-range không giúp (phí, bỏ lỡ nhịp hồi). DCA Buy & Hold thắng grid ở cả 4 cặp; grid chỉ có lỗ chưa chốt tệ nhất nông hơn trên crypto |
+
+**Bài học chính**
+- Tối ưu in-sample luôn overfit; đo đúng phải là forward trên dữ liệu chưa thấy.
+- Mục tiêu nên là lãi lưới, còn lợi nhuận vị thế chưa ghép là rủi ro hướng giá, không phải thứ để tối ưu.
+- Ràng buộc cấu trúc (rộng, dày) hiệu quả hơn tinh chỉnh tham số.
+- Hai cơ chế "phòng thủ" (reset tuần, re-range) không cứu được tuần sập; kết quả cuối vẫn thua Buy & Hold trong giai đoạn này, điều này cũng khớp kết luận của Chen et al. 2025 (grid không có edge nội tại).
+
+**Hướng tiếp theo, rút từ các paper đã đọc (chưa làm)**
+1. PBO/CSCV (Bailey 2017): đo xác suất cấu hình IS tốt nhất kém trung vị OOS, để biết tối ưu hóa có đáng công không.
+2. Giảm bậc tự do (Jacquier 2025): cố định dl=dh hoặc n, hoặc kéo dài IS.
+3. Vùng ổn định ≥ 90% tốt nhất, cliff veto, xếp hạng Calmar trong vùng (AlgoXpert 2026), nâng cấp từ `stable_pick`.
+4. Đưa tham số về gần bot thật (n 14–34, bước 0.4–1%, dư USDT/phí dự trữ) để tăng số chu kỳ khép kín.
+5. Lọc theo regime (ATR/STRESS), là ý tưởng riêng, chưa có paper kiểm chứng.
+DGT re-range đã thử và đóng.
+
 ## Thông tin nền
 
 **Nghiên cứu**

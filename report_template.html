@@ -313,6 +313,7 @@ function render() {
   renderStats();
   renderFinal();
   renderDecomp();
+  renderCoverage();
   renderHighlights();
   renderInsights();
   setupCollapse();
@@ -693,6 +694,31 @@ function setupCollapse() {
     s.innerHTML = `<b>Tóm tắt:</b> ${txt}`;
     h.insertAdjacentElement("afterend", s);
   });
+}
+
+function renderCoverage() {
+  const have = SYMS.filter((s) => D.ab && D.ab[s]);
+  if (!have.length) return;
+  const c0 = D.ab[have[0]].constraints, pc = (v, d = 2) => (v >= 0 ? "+" : "") + (v * 100).toFixed(d) + "%";
+  const row = (s, label, a, b, fmt) => `<tr><td>${label}</td><td>${fmt(a)}</td><td>${fmt(b)}</td></tr>`;
+  const cards = have.map((s) => {
+    const A = D.ab[s].constrained, B = D.ab[s].free, i = SYMS.indexOf(s);
+    return `<div class="vcard"><h3><span class="tag" style="background:${COL[i]};color:#fff">${s}</span></h3>
+      <table><tr><th></th><th>Lưới rộng và dày</th><th>Tự do</th></tr>` +
+      row(s, "Tổng / tuần", A.tot_wk, B.tot_wk, (v) => pc(v)) + row(s, "Lưới / tuần", A.grid_wk, B.grid_wk, (v) => pc(v)) + row(s, "Vị thế / tuần", A.inv_wk, B.inv_wk, (v) => pc(v)) +
+      row(s, `Tuần sập (${A.crash_n} tuần): lợi suất TB`, A.crash_ret, B.crash_ret, (v) => pc(v, 1)) +
+      row(s, "Tuần giá phá đáy lưới", A.breach, B.breach, (v) => (v * 100).toFixed(0) + "%") +
+      row(s, "MDD gộp", A.pooled_mdd, B.pooled_mdd, (v) => (v * 100).toFixed(1) + "%") +
+      row(s, "Lợi suất gộp", A.pooled_return, B.pooled_return, (v) => (v * 100).toFixed(1) + "%") +
+      row(s, "Chu kỳ khép kín / ngày", A.cycles_day, B.cycles_day, (v) => v.toFixed(2)) +
+      row(s, "Tham số trung vị (dl / dh / n)", A, B, (v) => `${(v.dl_med * 100).toFixed(0)}% / ${(v.dh_med * 100).toFixed(0)}% / ${v.n_med.toFixed(0)}`) +
+      `</table><p class="note">B&amp;H trong các tuần sập: ${pc(A.bh_crash_ret, 1)}.</p></div>`;
+  }).join("");
+  const el = document.createElement("div");
+  el.innerHTML = `<h2 style="font-size:15px;margin-top:22px">Lưới rộng và dày: phủ một phần các tuần giá sập</h2>
+    <div class="callout"><b>Ràng buộc đang áp dụng</b>: phủ ít nhất <b>${(c0.min_dl * 100).toFixed(0)}%</b> phía dưới giá đầu (có sẵn lệnh mua khi giá rơi), tổng độ rộng ≥ <b>${(c0.min_range * 100).toFixed(0)}%</b>, từ <b>${c0.min_n}</b> lưới trở lên, kèm bước ≥ 0.4%. Số liệu lấy từ các bot Bitget thật (phạm vi 12–26%, 14–34 lưới). "Tuần sập" là tuần mà giữ coin giảm hơn ${Math.abs(c0.crash_th * 100).toFixed(0)}%. Cột "Tự do" là cùng quy trình nhưng không ràng buộc.</div>
+    <div class="row2">${cards}</div>`;
+  $("decomp").appendChild(el);
 }
 
 function addInsight(prefix, html) {

@@ -604,19 +604,22 @@ function renderHighlights() {
 }
 
 function decompChart(rows) {
-  const W = 640, rh = 50, l = 74, r = 24, H = rows.length * rh + 30;
-  const vals = rows.flatMap((q) => [q.grid, q.tot, q.bh, 0]);
+  const W = 640, rh = 74, l = 74, r = 24, H = rows.length * rh + 30;
+  const vals = rows.flatMap((q) => [q.grid, q.inv, q.tot, q.bh, 0]);
   const lo = Math.min(...vals) * 1.2, hi = Math.max(...vals) * 1.2, X = (v) => l + ((v - lo) / (hi - lo)) * (W - l - r);
   let g = "";
   for (const v of niceTicks(lo, hi, 6)) g += `<line class="gridline" x1="${X(v)}" x2="${X(v)}" y1="0" y2="${rows.length * rh}"/><text x="${X(v)}" y="${H - 8}" text-anchor="middle">${v.toFixed(2)}%</text>`;
   g += `<line x1="${X(0)}" x2="${X(0)}" y1="0" y2="${rows.length * rh}" style="stroke:var(--ink);stroke-width:1.5"/>`;
   rows.forEach((q, i) => {
-    const y = i * rh + 12, bar = (a, b, col, tt) => `<rect x="${Math.min(X(a), X(b))}" y="${y}" width="${Math.max(2, Math.abs(X(b) - X(a)))}" height="16" rx="3" style="fill:${col}"><title>${tt}</title></rect>`;
-    g += `<text x="${l - 8}" y="${y + 12}" text-anchor="end">${q.label}</text>` +
-      bar(0, q.grid, "var(--s3)", `Lợi nhuận lưới: ${q.grid.toFixed(3)}%/tuần`) + bar(q.grid, q.tot, q.inv < 0 ? "var(--neg)" : "var(--s4)", `Lợi nhuận vị thế: ${q.inv.toFixed(3)}%/tuần`) +
-      `<line x1="${X(q.tot)}" x2="${X(q.tot)}" y1="${y - 4}" y2="${y + 20}" style="stroke:var(--ink);stroke-width:2"><title>Tổng: ${q.tot.toFixed(3)}%/tuần</title></line>
-       <text x="${X(q.tot)}" y="${y + 36}" text-anchor="middle">tổng ${q.tot >= 0 ? "+" : ""}${q.tot.toFixed(2)}%</text>
-       <path d="M${X(q.bh)} ${y + 3} l6 7 l-6 7 l-6 -7 z" style="fill:var(--muted)"><title>Buy &amp; Hold: ${q.bh.toFixed(3)}%/tuần</title></path>`;
+    const y = i * rh + 8;
+    const bar = (v, yy, col, tt) => `<rect x="${Math.min(X(0), X(v))}" y="${yy}" width="${Math.max(2, Math.abs(X(v) - X(0)))}" height="15" rx="3" style="fill:${col}"><title>${tt}</title></rect>`;
+    const lab = (v, yy) => `<text x="${v >= 0 ? X(v) + 6 : X(v) - 6}" y="${yy + 12}" text-anchor="${v >= 0 ? "start" : "end"}">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</text>`;
+    g += `<text x="${l - 8}" y="${y + 30}" text-anchor="end">${q.label}</text>` +
+      bar(q.grid, y, "var(--s3)", `Lợi nhuận lưới: ${q.grid.toFixed(3)}%/tuần`) + lab(q.grid, y) +
+      bar(q.inv, y + 19, q.inv < 0 ? "var(--neg)" : "var(--s4)", `Lợi nhuận vị thế: ${q.inv.toFixed(3)}%/tuần`) + lab(q.inv, y + 19) +
+      `<line x1="${X(q.tot)}" x2="${X(q.tot)}" y1="${y - 2}" y2="${y + 38}" style="stroke:var(--ink);stroke-width:2.5"><title>Tổng: ${q.tot.toFixed(3)}%/tuần</title></line>
+       <text x="${X(q.tot)}" y="${y + 52}" text-anchor="middle">tổng ${q.tot >= 0 ? "+" : ""}${q.tot.toFixed(2)}%</text>
+       <path d="M${X(q.bh)} ${y + 12} l6 7 l-6 7 l-6 -7 z" style="fill:var(--muted)"><title>Buy &amp; Hold: ${q.bh.toFixed(3)}%/tuần</title></path>`;
   });
   return svgEl(W, H, g);
 }
@@ -681,9 +684,11 @@ function renderInsights() {
   // 9. lịch fold
   if (D.fold_sched) addInsight("9.", `Mỗi tuần được đo forward đúng một lần và chưa từng dùng để chọn tham số: các thanh xanh không chồng lên nhau. IS dài ${D.fold_sched.cfg.is_days} ngày nên tham số thích nghi với thị trường gần nhất; ${D.fold_sched.n} fold cho nhiều bằng chứng hơn nhiều so với chia một lần.`);
   // 10. tóm tắt
-  if (D.summary) {
-    const top = SYMS.filter((s) => D.wf[s]).map((s) => { const S = D.wf[s].sum; const arr = [["ổn định", S.s_oos_retwk_median], ["phẳng", S.f_oos_retwk_median], ["đỉnh nhọn", S.oos_retwk_median], ["mặc định", S.def_retwk_median]].sort((a, b) => b[1] - a[1]); return `${s1(s)}: ${arr[0][0]}`; });
-    addInsight("10.", `Cách chọn tham số cho lợi suất tuần cao nhất theo từng cặp: ${top.join("; ")}. Lưu ý trung vị tuần thường đẹp hơn kết quả gộp, vì vài tuần lỗ lớn không thể hiện trong trung vị (xem mục 12).`);
+  if (D.summary && D.summary.every((r) => r.grid_wk_mean != null)) {
+    const g = D.summary.map((r) => `${s1(r.symbol)} ${pct(r.grid_wk_mean * 100, 2)}`).join(", ");
+    const iv = D.summary.map((r) => `${s1(r.symbol)} ${pct(r.inv_wk_mean * 100, 2)}`).join(", ");
+    const gw = D.summary.filter((r) => r.grid_wk_mean > 0).length, lost = D.summary.filter((r) => r.tot_wk_mean < 0).length;
+    addInsight("10.", `Lưới tự tạo lãi ở ${gw}/${D.summary.length} cặp (mỗi tuần: ${g}), nhưng phần vị thế (coin chưa ghép) là ${iv}: ${lost}/${D.summary.length} cặp có tổng âm.${lost ? " Nói cách khác, cơ chế mua-bán ghép cặp hoạt động, nhưng lãi lưới bị phần lỗ do giá đi ngược vị thế nuốt mất." : ""}`);
   }
   // 11. thống kê
   if (D.summary) {

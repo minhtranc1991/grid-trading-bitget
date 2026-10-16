@@ -165,7 +165,7 @@ def build():
         "td": ms(day.index), "atr": {s: r4(atr_pct[s]) for s in SYMS}, "atr_n": ATR_N,
         "months": months, "mret": {s: r4(mret[s] * 100) for s in SYMS},
         "corr": ret.corr().round(3).values.tolist(),
-        "hist": hist, "dstat": dstat, "regime": reg, "stress_z": STRESS_Z, "reg_win": REG_WIN, "fold_sched": fold_schedule(), "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "wf": {s: load_wf(s) for s in SYMS}, "stats": {s: load_json(f"stats_{s}.json") for s in SYMS}, "sens": {s: load_json(f"sens_{s}.json") for s in SYMS}, "summary": (pd.read_csv(g.LOG_PATH.parent / "summary.csv").to_dict("records") if (g.LOG_PATH.parent / "summary.csv").exists() else None), "oos_eq": load_json("oos_equity.json"), "ab": {s: load_json(f"ab_{s}.json") for s in SYMS}, "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
+        "hist": hist, "dstat": dstat, "regime": reg, "stress_z": STRESS_Z, "reg_win": REG_WIN, "fold_sched": fold_schedule(), "met": met, "sweep": {s: load_sweep(s) for s in SYMS}, "wf": {s: load_wf(s) for s in SYMS}, "stats": {s: load_json(f"stats_{s}.json") for s in SYMS}, "sens": {s: load_json(f"sens_{s}.json") for s in SYMS}, "summary": (pd.read_csv(g.LOG_PATH.parent / "summary.csv").to_dict("records") if (g.LOG_PATH.parent / "summary.csv").exists() else None), "oos_eq": load_json("oos_equity.json"), "ab": {s: load_json(f"ab_{s}.json") for s in SYMS}, "dca": {s: load_json(f"dca_{s}.json") for s in SYMS}, "runs": parse_log(g.LOG_PATH.read_text(encoding="utf-8")),
         "rawlog": g.LOG_PATH.read_text(encoding="utf-8"),
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M"),
     }

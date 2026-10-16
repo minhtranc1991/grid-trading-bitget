@@ -173,7 +173,12 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>13. Lịch sử chạy (results/run.log)</h2>
+    <h2>13. DCA mỗi đầu tháng: grid so với DCA Buy &amp; Hold</h2>
+    <div id="dca"></div>
+  </section>
+
+  <section class="card">
+    <h2>14. Lịch sử chạy (results/run.log)</h2>
     <div id="runs"></div>
     <details><summary>Log gốc</summary><pre id="rawlog"></pre></details>
   </section>
@@ -314,6 +319,8 @@ function render() {
   renderFinal();
   renderDecomp();
   renderCoverage();
+  renderRerange();
+  renderDCA();
   renderHighlights();
   renderInsights();
   setupCollapse();
@@ -606,6 +613,7 @@ function renderHighlights() {
       <li><b>Mục 9–10: quy trình và kết quả.</b> Lịch IS/OOS/forward và so sánh các cách chọn tham số.</li>
       <li><b>Mục 11: độ tin cậy.</b> Kết quả có thể chỉ do may rủi không, và có nhạy với phí/khung nến không.</li>
       <li><b>Mục 12: kết luận</b> theo từng cặp và tham số khuyến nghị.</li>
+      <li><b>Mục 13: DCA $50 mỗi tháng</b> so grid với DCA Buy &amp; Hold.</li>
     </ul>`;
 }
 
@@ -651,9 +659,9 @@ function renderDecomp() {
 }
 
 // ---------- Thu gọn / mở rộng từng mục (thu gọn = chỉ giữ tóm tắt ý chính) ----------
-let COLLAPSED = new Set();
-try { COLLAPSED = new Set(JSON.parse(localStorage.getItem("report.collapsed") || "[]")); } catch (e) { /* không có localStorage */ }
-const saveCollapsed = () => { try { localStorage.setItem("report.collapsed", JSON.stringify([...COLLAPSED])); } catch (e) { /* bỏ qua */ } };
+let COLLAPSED = new Set(Array.from({ length: 14 }, (_, i) => String(i + 1))); // mặc định thu gọn tất cả, chỉ hiện tóm tắt
+try { const v = localStorage.getItem("report.collapsed2"); if (v !== null) COLLAPSED = new Set(JSON.parse(v)); } catch (e) { /* không có localStorage */ }
+const saveCollapsed = () => { try { localStorage.setItem("report.collapsed2", JSON.stringify([...COLLAPSED])); } catch (e) { /* bỏ qua */ } };
 
 function sectionSummaries() {
   const s1 = (s) => s.replace("USDT", ""), mean = (a) => { const v = a.filter((x) => x != null); return v.reduce((p, q) => p + q, 0) / v.length; };
@@ -671,7 +679,8 @@ function sectionSummaries() {
   out["10"] = () => S && S.every((r) => r.grid_wk_mean != null) ? "Mỗi tuần (lưới / vị thế / tổng): " + S.map((r) => `${s1(r.symbol)} ${pct(r.grid_wk_mean * 100, 2)} / ${pct(r.inv_wk_mean * 100, 2)} / ${pct(r.tot_wk_mean * 100, 2)}`).join("; ") + "." : "Chưa có kết quả.";
   out["11"] = () => { if (!S) return "Chưa có kết quả."; const z = S.filter((r) => r.sharpe_ci_lo <= 0 && r.sharpe_ci_hi >= 0).length; return `${z}/${S.length} cặp có khoảng tin cậy Sharpe chứa 0: chưa đủ bằng chứng thống kê về lợi thế.`; };
   out["12"] = () => S ? S.map((r) => `${s1(r.symbol)}: ${verdict(r, D.wf[r.symbol]).badge[1]}`).join("; ") + "." : "Chưa có kết quả.";
-  out["13"] = () => { const r = D.runs[D.runs.length - 1]; return `${D.runs.length} lần chạy đã ghi${r ? `; gần nhất ${r.t}` : ""}.`; };
+  out["13"] = () => { const H = SYMS.filter((s) => D.dca && D.dca[s]); if (!H.length) return "Chưa có kết quả DCA."; return `Nạp $${D.dca[H[0]].amount} mỗi tháng: ` + H.map((s) => { const d = D.dca[s]; return `${s1(s)} grid ${pct(d.grid.roi * 100, 1)} vs DCA B&H ${pct(d.bh.roi * 100, 1)}`; }).join("; ") + "."; };
+  out["14"] = () => { const r = D.runs[D.runs.length - 1]; return `${D.runs.length} lần chạy đã ghi${r ? `; gần nhất ${r.t}` : ""}.`; };
   return out;
 }
 
@@ -721,6 +730,34 @@ function renderCoverage() {
   $("decomp").appendChild(el);
 }
 
+function renderRerange() {
+  const have = SYMS.filter((s) => D.wf[s] && D.wf[s].sum.rr_retwk_mean != null);
+  if (!have.length) return;
+  const pc = (v, d = 2) => (v >= 0 ? "+" : "") + (v * 100).toFixed(d) + "%";
+  const el = document.createElement("div");
+  el.innerHTML = `<h2 style="font-size:15px;margin-top:22px">Re-range khi giá phá đáy</h2>
+    <div class="callout">Giống cách người dùng bot sửa phạm vi lưới sau khi giá sập: khi giá đóng cửa dưới đáy lưới, dựng lại lưới quanh giá mới với cùng dl, dh, n; bán bớt coin để có tiền cho các lệnh mua mới ở vạch thấp hơn (có tính phí). Cột "Reset cuối tuần" là cách cũ: giữ nguyên đến hết tuần.</div>
+    <table><tr><th>Cặp</th><th>Tổng/tuần: reset cuối tuần</th><th>Tổng/tuần: re-range</th><th>Tuần sập: reset cuối tuần</th><th>Tuần sập: re-range</th><th>Số lần re-range/tuần</th><th>MDD tuần (trung vị): re-range</th></tr>` +
+    have.map((s) => { const S = D.wf[s].sum; return `<tr><td>${s}</td><td>${pc(S.s_oos_retwk_mean)}</td><td>${pc(S.rr_retwk_mean)}</td><td>${pc(S.s_oos_crash_ret, 1)}</td><td>${pc(S.rr_crash_ret, 1)}</td><td>${S.rr_resets_mean.toFixed(2)}</td><td>${pc(S.rr_mdd_median, 1)}</td></tr>`; }).join("") + "</table>";
+  $("decomp").appendChild(el);
+}
+
+function renderDCA() {
+  const have = SYMS.filter((s) => D.dca && D.dca[s]);
+  if (!have.length) { $("dca").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py</code> hoặc <code>--dca</code>.</p>`; return; }
+  const d0 = D.dca[have[0]], usd = (v) => "$" + v.toFixed(1);
+  const tbl = have.map((s) => { const d = D.dca[s]; return [["Grid (reset cuối tuần)", d.grid], ["Grid + re-range khi phá đáy", d.rerange], ["DCA Buy &amp; Hold", d.bh]].map((r, k) =>
+    `<tr><td>${k === 0 ? s : ""}</td><td>${r[0]}</td><td>${k === 0 ? usd(d.invested) : ""}</td><td>${usd(r[1].final)}</td><td>${pct(r[1].roi * 100, 1)}</td><td>${isNaN(r[1].irr) ? "–" : pct(r[1].irr * 100, 0)}</td><td>${pct(r[1].worst_vs_invested * 100, 1)}</td></tr>`).join(""); }).join("");
+  $("dca").innerHTML = `<div class="callout"><b>Kịch bản</b>: bắt đầu với <b>$${d0.amount}</b> và nạp thêm <b>$${d0.amount}</b> vào đầu mỗi tháng (${d0.deposits} lần, tổng đã nạp <b>$${d0.invested.toFixed(0)}</b>). So ba tài khoản cùng dòng tiền: (1) grid reset cuối tuần, (2) grid có re-range khi phá đáy, (3) DCA Buy &amp; Hold (mỗi lần nạp mua coin ngay, phí 0.1%). Mỗi lệnh grid tối thiểu <b>$${d0.min_order}</b> theo vốn đã nạp tại thời điểm chọn tham số, nên vốn nhỏ ($50) chỉ cho lưới thưa hơn, vốn lớn dần cho phép lưới dày hơn. Giá trị tuần được nối tiếp: (vốn + nạp) × (1 + lợi suất grid của tuần đó).</div>
+    <table><tr><th>Cặp</th><th>Chiến lược</th><th>Đã nạp</th><th>Giá trị cuối</th><th>Lãi/lỗ (ROI)</th><th>IRR năm</th><th>Lỗ chưa chốt tệ nhất</th></tr>${tbl}</table>
+    <p class="note">ROI = giá trị cuối / tổng đã nạp − 1. IRR là lãi suất năm quy đổi từ dòng tiền nạp theo thời điểm. "Lỗ chưa chốt tệ nhất" là mức thấp nhất của giá trị tài khoản so với vốn đã nạp tại cùng thời điểm.</p>
+    <div class="row2" id="dca-ch"></div>`;
+  const items = have.map((s) => { const el = document.createElement("div"), c = document.createElement("div"), i = SYMS.indexOf(s);
+    el.innerHTML = `<h2 style="font-size:14px">${s}</h2><div class="legend"><span><i style="background:${COL[i]}"></i>Grid</span><span><i style="background:var(--s4)"></i>Grid + re-range</span><span><i style="background:var(--muted)"></i>DCA Buy &amp; Hold</span><span><i style="background:var(--ink2)"></i>Đã nạp</span></div>`;
+    el.appendChild(c); $("dca-ch").appendChild(el); return [c, s, i]; });
+  items.forEach(([c, s, i]) => { const d = D.dca[s].series; lineChart(c, { x: d.t, series: [{ name: s, color: COL[i], y: d.grid }, { name: "Re-range", color: "var(--s4)", y: d.rerange }, { name: "B&H", color: "var(--muted)", y: d.bh }, { name: "Nạp", color: "var(--ink2)", y: d.invested }], fmt: (v, t) => "$" + v.toFixed(t ? 1 : 0), h: 240 }); });
+}
+
 function addInsight(prefix, html) {
   const h = [...document.querySelectorAll("section.card h2")].find((x) => x.textContent.trim().startsWith(prefix));
   if (!h) return;
@@ -767,6 +804,12 @@ function renderInsights() {
     const gw = D.summary.filter((r) => r.grid_wk_mean > 0).length, lost = D.summary.filter((r) => r.tot_wk_mean < 0).length;
     addInsight("10.", `Lưới tự tạo lãi ở ${gw}/${D.summary.length} cặp (mỗi tuần: ${g}), nhưng phần vị thế (coin chưa ghép) là ${iv}: ${lost}/${D.summary.length} cặp có tổng âm.${lost ? " Nói cách khác, cơ chế mua-bán ghép cặp hoạt động, nhưng lãi lưới bị phần lỗ do giá đi ngược vị thế nuốt mất." : ""}`);
   }
+  // 13. DCA
+  const hv = SYMS.filter((s) => D.dca && D.dca[s]);
+  if (hv.length) {
+    const wins = hv.filter((s) => D.dca[s].grid.final > D.dca[s].bh.final).length;
+    addInsight("13.", `Grid thắng DCA Buy &amp; Hold ở ${wins}/${hv.length} cặp: ${hv.map((s) => `${s.replace("USDT", "")} ${pct((D.dca[s].grid.roi - D.dca[s].bh.roi) * 100, 1)} điểm %`).join(", ")}. Về rủi ro, lỗ chưa chốt tệ nhất của grid là ${hv.map((s) => `${s.replace("USDT", "")} ${pct(D.dca[s].grid.worst_vs_invested * 100, 0)}`).join(", ")}, so với DCA Buy &amp; Hold ${hv.map((s) => `${s.replace("USDT", "")} ${pct(D.dca[s].bh.worst_vs_invested * 100, 0)}`).join(", ")}.`);
+  }
   // 11. thống kê
   if (D.summary) {
     const z = D.summary.filter((r) => r.sharpe_ci_lo <= 0 && r.sharpe_ci_hi >= 0).length;
@@ -774,7 +817,7 @@ function renderInsights() {
   }
 }
 
-$("collapseAll").onclick = () => { for (let i = 1; i <= 13; i += 1) COLLAPSED.add(String(i)); saveCollapsed(); render(); };
+$("collapseAll").onclick = () => { for (let i = 1; i <= 14; i += 1) COLLAPSED.add(String(i)); saveCollapsed(); render(); };
 $("expandAll").onclick = () => { COLLAPSED.clear(); saveCollapsed(); render(); };
 $("theme").onclick = () => {
   const el = document.documentElement, dark = el.dataset.theme ? el.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;

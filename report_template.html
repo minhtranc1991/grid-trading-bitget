@@ -65,6 +65,16 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
 .badge.bad { background:color-mix(in srgb, var(--neg) 30%, var(--surface)); }
 .param { background:var(--surface); border-radius:8px; padding:10px 12px; font-size:14px; margin-top:8px; } .param ul { margin:6px 0 0; }
 .warnli { color:var(--ink2); }
+.insight { border-left:4px solid var(--s1); background:color-mix(in srgb, var(--s1) 9%, var(--surface)); border-radius:8px; padding:10px 14px; font-size:14px; margin:10px 0; }
+.insight b.lab { display:block; font-size:12px; text-transform:uppercase; letter-spacing:.04em; color:var(--ink2); margin-bottom:2px; }
+.hero { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin:12px 0; }
+.hero div { background:var(--bg); border-radius:12px; padding:14px; }
+.hero b { display:block; font-size:28px; line-height:1.2; font-variant-numeric:tabular-nums; }
+.hero span { color:var(--ink2); font-size:13px; }
+.hero .good b { color:var(--s3); } .hero .warn b { color:var(--s4); } .hero .bad b { color:var(--neg); }
+.steps { counter-reset:st; list-style:none; padding:0; margin:8px 0; }
+.steps li { counter-increment:st; padding:6px 0 6px 34px; position:relative; font-size:14px; }
+.steps li::before { content:counter(st); position:absolute; left:0; top:5px; width:24px; height:24px; border-radius:50%; background:var(--s1); color:#fff; text-align:center; line-height:24px; font-size:12px; font-weight:700; }
 .tag { display:inline-block; padding:1px 8px; border-radius:99px; font-size:12px; background:var(--bg); color:var(--ink2); }
 </style>
 </head>
@@ -74,6 +84,8 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   <h1>Grid Opt · Báo cáo dữ liệu & log</h1>
   <p class="sub" id="meta"></p>
   <div class="kpis" id="kpis"></div>
+
+  <section class="card" id="hl"></section>
 
   <section class="card">
     <h2>1. Giá chuẩn hóa (đầu kỳ = 100)</h2>
@@ -294,6 +306,8 @@ function render() {
   renderWF();
   renderStats();
   renderFinal();
+  renderHighlights();
+  renderInsights();
 }
 
 function wfChart(f) {
@@ -538,6 +552,100 @@ function renderDist() {
   SYMS.forEach((s) => regimeChart($("rg-" + s), s));
   $("reg-sub").textContent = `Mỗi chấm là lợi suất của một ngày (đóng cửa so với hôm trước). STRESS (cam) là ngày lợi suất lệch quá ${D.stress_z} độ lệch chuẩn so với ${D.reg_win} ngày trước đó; NORMAL (xanh) là các ngày còn lại. Nhãn ghi giá trị của 14 ngày STRESS lớn nhất.`;
   $("reg-note").textContent = "Cách đọc: các ngày STRESS tập trung theo cụm là lúc thị trường đổi chế độ; lưới dễ bị giá phá biên hoặc giữ coin giảm giá trong các cụm này.";
+}
+
+// ---------- Điểm nổi bật + giải thích theo từng mục ----------
+function renderHighlights() {
+  const S = D.summary, has = S && S.length, fs = D.fold_sched;
+  if (!has) { $("hl").innerHTML = `<h2>Điểm nổi bật</h2><p class="note">Chạy <code>python grid_optimizer.py</code> để có kết quả tổng hợp.</p>`; return; }
+  const nS = S.length, ddCut = S.map((r) => (r.oos_mdd - r.bh_mdd) * 100), avgDd = ddCut.reduce((a, b) => a + b, 0) / nS;
+  const better = S.filter((r) => r.oos_return > r.bh_return), ciZero = S.filter((r) => r.sharpe_ci_lo <= 0 && r.sharpe_ci_hi >= 0);
+  const wins = S.map((r) => r.pct_fold_profit), bhWins = SYMS.map((s) => (D.wf[s] ? D.wf[s].sum.bh_pct_profit : NaN)).filter((v) => !isNaN(v));
+  const bestGap = S.slice().sort((a, b) => (b.oos_return - b.bh_return) - (a.oos_return - a.bh_return))[0];
+  const worstGap = S.slice().sort((a, b) => (a.oos_return - a.bh_return) - (b.oos_return - b.bh_return))[0];
+  const gaps = SYMS.reduce((a, s) => a + (D.runs.length ? (D.runs[D.runs.length - 1].syms[s] || {}).gap || 0 : 0), 0);
+  const one = (r) => r.symbol.replace("USDT", "");
+  $("hl").innerHTML = `<h2>Điểm nổi bật</h2>
+    <p class="sub">Tóm tắt những gì dự án đã làm được và rút ra được, tính từ kết quả mới nhất bên dưới.</p>
+    <div class="hero">
+      <div class="${avgDd > 5 ? "good" : "warn"}"><b>−${avgDd.toFixed(0)} điểm %</b><span>Mức sụt tối đa (MDD) giảm trung bình so với giữ coin, trên ${nS} cặp</span></div>
+      <div class="${Math.min(...wins) > 50 ? "good" : "warn"}"><b>${Math.min(...wins).toFixed(0)}–${Math.max(...wins).toFixed(0)}%</b><span>Số tuần forward có lãi (giữ coin: ${bhWins.length ? Math.min(...bhWins).toFixed(0) + "–" + Math.max(...bhWins).toFixed(0) + "%" : "n/a"})</span></div>
+      <div class="${better.length >= nS / 2 ? "good" : "warn"}"><b>${better.length}/${nS}</b><span>cặp mà lợi suất gộp của grid cao hơn giữ coin (${better.map(one).join(", ") || "không có"})</span></div>
+      <div class="${ciZero.length ? "bad" : "good"}"><b>${ciZero.length}/${nS}</b><span>cặp có khoảng tin cậy Sharpe chứa 0: chưa đủ bằng chứng thống kê về lợi thế</span></div>
+      <div class="good"><b>${fs ? fs.n : "–"} tuần</b><span>forward độc lập mỗi cặp, mỗi tuần chỉ đo một lần, không rò rỉ dữ liệu</span></div>
+      <div class="${gaps === 0 ? "good" : "warn"}"><b>${gaps} gap</b><span>nến thiếu trên ${D.met[SYMS[0]].bars.toLocaleString()} nến mỗi cặp</span></div>
+    </div>
+    <h3 style="font-size:15px;margin:16px 0 4px">Kết luận một câu</h3>
+    <p style="margin:0">${better.length >= nS / 2 ? "Grid cho kết quả tốt hơn giữ coin ở " + better.map(one).join(", ") : "Grid chưa vượt giữ coin về lợi nhuận"}, giảm rủi ro rõ rệt (MDD giảm ${avgDd.toFixed(0)} điểm %), nhưng
+      <b>chưa đủ bằng chứng thống kê để khẳng định có lợi thế thật</b>: khoảng tin cậy của Sharpe chứa 0 ở ${ciZero.length}/${nS} cặp.
+      Tốt nhất so với giữ coin: ${one(bestGap)} (${pct((bestGap.oos_return - bestGap.bh_return) * 100)} điểm %); kém nhất: ${one(worstGap)} (${pct((worstGap.oos_return - worstGap.bh_return) * 100)} điểm %).</p>
+    <h3 style="font-size:15px;margin:16px 0 4px">Những gì đã đạt được</h3>
+    <ol class="steps">
+      <li><b>Dữ liệu sạch:</b> 4 cặp, ${D.met[SYMS[0]].bars.toLocaleString()} nến ${D.tf} mỗi cặp, ${((D.span[1] - D.span[0]) / 864e5).toFixed(0)} ngày, ${gaps} nến thiếu; phí 0.1% mỗi chiều xác minh từ app Bitget.</li>
+      <li><b>Mô phỏng lưới đúng cơ chế thật:</b> mỗi slot mua ở vạch dưới, bán ở vạch trên kế tiếp, có trễ; đối chiếu với một mô phỏng sổ lệnh limit viết độc lập, sai số &lt; 1e-9.</li>
+      <li><b>Kiểm định ngoài mẫu nghiêm ngặt:</b> IS ${fs ? fs.cfg.is_days : 28} ngày tìm tham số, OOS ${fs ? fs.cfg.sel_days : 7} ngày chọn tham số ổn định, forward ${fs ? fs.cfg.fwd_days : 7} ngày đo hiệu suất, trượt hàng tuần; có test chống rò rỉ dữ liệu.</li>
+      <li><b>Tối ưu theo lợi suất thuần</b> và báo cáo đồng thời Sharpe, Sortino, Calmar để xem góc nhìn rủi ro.</li>
+      <li><b>Thống kê trung thực:</b> khoảng tin cậy bootstrap theo khối, Deflated Sharpe sau khi tính hàng nghìn tổ hợp, độ nhạy với phí và khung nến.</li>
+      <li><b>Một lệnh chạy hết:</b> <code>python grid_optimizer.py</code> chạy song song 8 tiến trình, tự cập nhật báo cáo này.</li>
+    </ol>
+    <h3 style="font-size:15px;margin:16px 0 4px">Cách đọc báo cáo này</h3>
+    <ul style="margin:0;padding-left:20px;font-size:14px">
+      <li><b>Mục 1–8: thị trường.</b> Giá, drawdown, ATR, phân phối, regime, lợi suất theo tháng, tương quan: nền để hiểu vì sao lưới hoạt động ra sao.</li>
+      <li><b>Mục 9–10: quy trình và kết quả.</b> Lịch IS/OOS/forward và so sánh các cách chọn tham số.</li>
+      <li><b>Mục 11: độ tin cậy.</b> Kết quả có thể chỉ do may rủi không, và có nhạy với phí/khung nến không.</li>
+      <li><b>Mục 12: kết luận</b> theo từng cặp và tham số khuyến nghị.</li>
+    </ul>`;
+}
+
+function addInsight(prefix, html) {
+  const h = [...document.querySelectorAll("section.card h2")].find((x) => x.textContent.trim().startsWith(prefix));
+  if (!h) return;
+  const el = document.createElement("div");
+  el.className = "insight";
+  el.innerHTML = `<b class="lab">Điều này cho thấy</b>${html}`;
+  const nxt = h.nextElementSibling;
+  (nxt && nxt.classList.contains("sub") ? nxt : h).insertAdjacentElement("afterend", el);
+}
+
+function renderInsights() {
+  document.querySelectorAll(".insight").forEach((e) => e.remove());
+  const s1 = (s) => s.replace("USDT", ""), mean = (a) => { const v = a.filter((x) => x != null); return v.reduce((p, q) => p + q, 0) / v.length; };
+  // 1. giá
+  const end = SYMS.map((s) => [s, D.px[s][D.px[s].length - 1] - 100]).sort((a, b) => b[1] - a[1]);
+  addInsight("1.", `Trong giai đoạn này ${s1(end[0][0])} tốt nhất (${pct(end[0][1], 0)}), ${s1(end[end.length - 1][0])} kém nhất (${pct(end[end.length - 1][1], 0)}). Hai token vàng gần như đi cùng nhau, nên nên coi chúng là một nguồn thông tin, không phải hai.`);
+  // 2. drawdown
+  const mdd = SYMS.map((s) => [s, D.met[s].mdd * 100]).sort((a, b) => a[1] - b[1]);
+  addInsight("2.", `Giữ coin từng sụt tối đa ${mdd[0][1].toFixed(0)}% (${s1(mdd[0][0])}) và ${mdd[mdd.length - 1][1].toFixed(0)}% (${s1(mdd[mdd.length - 1][0])}). Đây là mức "đau" mà grid cần giảm được thì mới có ý nghĩa thực tế.`);
+  // 3. ATR
+  const atr = SYMS.map((s) => [s, mean(D.atr[s])]);
+  addInsight("3.", `ATR trung bình: ${atr.map(([s, v]) => `${s1(s)} ${v.toFixed(1)}%`).join(", ")} mỗi ngày. Bước lưới 0.4% bằng khoảng ${(0.4 / atr[atr.length - 1][1] * 100).toFixed(0)}% biên độ ngày của vàng nhưng chỉ ${(0.4 / atr[0][1] * 100).toFixed(0)}% của ${s1(atr[0][0])}: vàng cho ít vòng mua-bán hơn trên cùng một bước, nên phí ăn phần lớn hơn.`);
+  // 4. phân phối
+  const ku = SYMS.map((s) => D.dstat[s].kurt);
+  addInsight("4.", `Excess kurtosis từ ${Math.min(...ku).toFixed(1)} đến ${Math.max(...ku).toFixed(1)} (chuẩn = 0): đuôi dày, biến cố lớn xảy ra thường hơn mô hình chuẩn giả định. Một vài ngày lớn quyết định phần lớn kết quả, là lý do lưới bị phá biên có thể gây lỗ nặng.`);
+  // 5. regime
+  const st = SYMS.map((s) => { const r = D.regime[s], c = {}; r.t.forEach((t, i) => { if (r.s[i]) { const k = fmtDate(t).slice(0, 7); c[k] = (c[k] || 0) + 1; } }); const b = Object.entries(c).sort((a, b) => b[1] - a[1])[0]; return `${s1(s)}: ${b ? b[0] + " (" + b[1] + " ngày)" : "–"}`; });
+  addInsight("5.", `Khoảng ${(mean(SYMS.map((s) => D.regime[s].n_stress / D.regime[s].n)) * 100).toFixed(0)}% số ngày là STRESS và chúng tụ thành cụm. Tháng nhiều ngày STRESS nhất: ${st.join("; ")}. Các cụm này là lúc lưới dễ bị phá biên.`);
+  // 6. B&H metrics
+  const sh = SYMS.map((s) => [s, D.met[s].sharpe]).sort((a, b) => b[1] - a[1]);
+  addInsight("6.", `Sharpe giữ coin cao nhất là ${s1(sh[0][0])} (${sh[0][1].toFixed(2)}), thấp nhất ${s1(sh[sh.length - 1][0])} (${sh[sh.length - 1][1].toFixed(2)}). Đây là mốc để so sánh ở mục 10–12.`);
+  // 7. tháng
+  const mon = SYMS.map((s) => { const v = D.mret[s]; const ix = v.map((x, i) => [x, i]).filter((p) => p[0] != null); const mx = ix.reduce((a, b) => (b[0] > a[0] ? b : a)), mn = ix.reduce((a, b) => (b[0] < a[0] ? b : a)); return `${s1(s)} tốt nhất ${D.months[mx[1]].replace("*", "")} (${pct(mx[0], 0)}), tệ nhất ${D.months[mn[1]].replace("*", "")} (${pct(mn[0], 0)})`; });
+  addInsight("7.", mon.join("; ") + ". Thị trường đổi chế độ nhanh nên một tham số cố định hiếm khi tốt cả năm; đó là lý do dùng rolling hàng tuần.");
+  // 8. tương quan
+  const ix = (s) => SYMS.indexOf(s);
+  addInsight("8.", `BTC và ETH tương quan ${D.corr[ix("BTCUSDT")][ix("ETHUSDT")].toFixed(2)}, PAXG và XAUT ${D.corr[ix("PAXGUSDT")][ix("XAUTUSDT")].toFixed(2)}. Thực chất chỉ có hai nguồn thông tin độc lập (crypto và vàng), nên 4 kết quả không phải 4 bằng chứng riêng.`);
+  // 9. lịch fold
+  if (D.fold_sched) addInsight("9.", `Mỗi tuần được đo forward đúng một lần và chưa từng dùng để chọn tham số: các thanh xanh không chồng lên nhau. IS dài ${D.fold_sched.cfg.is_days} ngày nên tham số thích nghi với thị trường gần nhất; ${D.fold_sched.n} fold cho nhiều bằng chứng hơn nhiều so với chia một lần.`);
+  // 10. tóm tắt
+  if (D.summary) {
+    const top = SYMS.filter((s) => D.wf[s]).map((s) => { const S = D.wf[s].sum; const arr = [["ổn định", S.s_oos_retwk_median], ["phẳng", S.f_oos_retwk_median], ["đỉnh nhọn", S.oos_retwk_median], ["mặc định", S.def_retwk_median]].sort((a, b) => b[1] - a[1]); return `${s1(s)}: ${arr[0][0]}`; });
+    addInsight("10.", `Cách chọn tham số cho lợi suất tuần cao nhất theo từng cặp: ${top.join("; ")}. Lưu ý trung vị tuần thường đẹp hơn kết quả gộp, vì vài tuần lỗ lớn không thể hiện trong trung vị (xem mục 12).`);
+  }
+  // 11. thống kê
+  if (D.summary) {
+    const z = D.summary.filter((r) => r.sharpe_ci_lo <= 0 && r.sharpe_ci_hi >= 0).length;
+    addInsight("11.", `${z}/${D.summary.length} cặp có khoảng tin cậy Sharpe chứa 0. Nói đơn giản: với dữ liệu này, ta <b>không thể</b> loại trừ khả năng grid chỉ may mắn. Muốn kết luận chắc hơn cần thêm thời gian (nhiều chế độ thị trường khác nhau) hoặc đánh giá trên tài khoản thật.`);
+  }
 }
 
 $("theme").onclick = () => {

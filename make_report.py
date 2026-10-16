@@ -70,7 +70,7 @@ def load_wf(s):
     f = pd.read_csv(p)
     sp = g.space_for(s)
     return {"folds": f.round(4).to_dict("records"), "sum": {k: float(v) for k, v in g.wf_summary(f).items()},
-            "stab": {"peak": g.stability(f, sp), "flat": g.stability(f, sp, "f_")}, "dhmax": max(sp["dh"]), "default": g.DEFAULT_PICK}
+            "stab": {"peak": g.stability(f, sp), "flat": g.stability(f, sp, "f_"), "stable": g.stability(f, sp, "s_")}, "dhmax": max(sp["dh"]), "default": g.DEFAULT_PICK}
 
 
 def load_json(name):

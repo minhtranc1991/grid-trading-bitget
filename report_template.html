@@ -137,9 +137,9 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
   </section>
 
   <section class="card">
-    <h2>11. STEP 5–7: Walk-forward OUT-OF-SAMPLE, đỉnh nhọn vs phẳng vs DGT</h2>
-    <p class="sub">Mỗi fold: sweep trên 90 ngày train, chọn tham số đỉnh in-sample, áp tại giá đầu 30 ngày test, trượt 30 ngày. Tham số chọn chỉ dùng dữ liệu trước ngày bắt đầu test.</p>
-    <div class="legend"><span><i style="background:var(--s1)"></i>Grid chọn từ train (OOS)</span><span><i style="background:var(--muted)"></i>Buy &amp; Hold</span><span><i style="background:var(--s2)"></i>Grid mặc định (±10%, n=20)</span><span><i style="background:var(--s3)"></i>Grid "phẳng" (STEP 6)</span></div>
+    <h2>11. STEP 5–7: IS → OOS → forward, tham số ổn định vs đỉnh nhọn vs phẳng vs DGT</h2>
+    <p class="sub">Mỗi fold (trượt 1 tuần): <b>IS 4 tuần</b> tìm tham số tối ưu; <b>OOS 1 tuần</b> chấm lại các ứng viên và chọn tham số ổn định (tốt ở cả IS lẫn OOS); <b>forward 1 tuần</b> kế tiếp mới đo hiệu suất. Tuần forward chưa từng dùng để chọn tham số.</p>
+    <div class="legend"><span><i style="background:var(--s1)"></i>Grid ổn định (forward)</span><span><i style="background:var(--muted)"></i>Buy &amp; Hold</span><span><i style="background:var(--s2)"></i>Grid mặc định (±10%, n=20)</span></div>
     <div id="wf"></div>
   </section>
 
@@ -153,7 +153,7 @@ button { background:var(--surface); color:var(--ink); border:1px solid var(--axi
 
   <section class="card">
     <h2>13. STEP 9: Tóm tắt cuối và equity OOS</h2>
-    <p class="sub">Kết quả từ <code>python grid_optimizer.py</code> (walk-forward 90/30/30, phí 0.1%). Tham số khuyến nghị chọn bằng cách "phẳng" trên 90 ngày cuối, tương đối theo giá hiện tại.</p>
+    <p class="sub">Kết quả từ <code>python grid_optimizer.py</code> (IS 28 ngày / OOS 7 ngày / forward 7 ngày, phí 0.1%). Tham số khuyến nghị đi qua đúng quy trình IS → OOS trên dữ liệu mới nhất, tương đối theo giá hiện tại.</p>
     <div id="final"></div>
   </section>
 
@@ -312,10 +312,10 @@ function render() {
 
 function wfChart(f) {
   const W = 680, H = 200, m = { l: 36, r: 8, t: 8, b: 22 }, iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const keys = [["oos_sharpe", "var(--s1)"], ["f_oos_sharpe", "var(--s3)"], ["bh_sharpe", "var(--muted)"], ["def_sharpe", "var(--s2)"]];
+  const keys = [["s_oos_sharpe", "var(--s1)"], ["bh_sharpe", "var(--muted)"], ["def_sharpe", "var(--s2)"]];
   const all = f.flatMap((r) => keys.map(([k]) => r[k]));
   const lo = Math.min(0, ...all), hi = Math.max(0, ...all), Y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * ih;
-  const gw = iw / f.length, bw = Math.max(2, (gw - 6) / 4);
+  const gw = iw / f.length, bw = Math.max(1, (gw - 2) / 3);
   let g = "";
   for (const v of niceTicks(lo, hi, 5)) g += `<line class="gridline" x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}"/><text x="${m.l - 5}" y="${Y(v) + 4}" text-anchor="end">${v}</text>`;
   g += `<line class="axisline" x1="${m.l}" x2="${W - m.r}" y1="${Y(0)}" y2="${Y(0)}"/>`;
@@ -335,31 +335,34 @@ function renderWF() {
   const pc = (v) => (v * 100).toFixed(1) + "%";
   $("wf").innerHTML = have.map((s) => {
     const w = D.wf[s], S = w.sum, i = SYMS.indexOf(s);
-    const verdict = Math.max(S.oos_sharpe_median, S.f_oos_sharpe_median) > S.bh_sharpe_median ? "Grid chọn từ train tốt hơn B&H (trung vị Sharpe OOS)" : "Cả hai cách chọn đều KHÔNG tốt hơn B&H (trung vị Sharpe OOS)";
+    const verdict = S.s_oos_sharpe_median > S.bh_sharpe_median ? "Grid ổn định tốt hơn B&H (trung vị Sharpe forward)" : "Grid ổn định KHÔNG tốt hơn B&H (trung vị Sharpe forward)";
     return `<h2 style="font-size:15px;margin-top:18px"><span class="tag" style="background:${COL[i]};color:#fff">${s}</span> ${S.folds} fold · ${verdict}</h2>
       <div class="kpis">
-        <div class="kpi"><b>${S.oos_sharpe_median.toFixed(2)}</b><span>Sharpe OOS trung vị (đỉnh nhọn)</span></div>
-        <div class="kpi"><b>${S.f_oos_sharpe_median.toFixed(2)}</b><span>Sharpe OOS trung vị (phẳng)</span></div>
+        <div class="kpi"><b>${S.s_oos_sharpe_median.toFixed(2)}</b><span>Sharpe forward trung vị (ổn định)</span></div>
+        <div class="kpi"><b>${S.oos_sharpe_median.toFixed(2)}</b><span>Sharpe forward trung vị (đỉnh nhọn)</span></div>
+        <div class="kpi"><b>${S.f_oos_sharpe_median.toFixed(2)}</b><span>Sharpe forward trung vị (phẳng)</span></div>
         <div class="kpi"><b>${S.bh_sharpe_median.toFixed(2)}</b><span>Sharpe B&amp;H trung vị</span></div>
         <div class="kpi"><b>${S.def_sharpe_median.toFixed(2)}</b><span>Sharpe lưới mặc định</span></div>
-        <div class="kpi"><b>${S.is_sharpe_median.toFixed(2)}</b><span>Sharpe in-sample (chọn trên train)</span></div>
-        <div class="kpi"><b>${S.pct_profit.toFixed(0)}%</b><span>Fold có lãi</span></div>
-        <div class="kpi"><b>${S.pct_beat_bh.toFixed(0)}%</b><span>Fold hơn B&amp;H (return)</span></div>
+        <div class="kpi"><b>${S.s_is_sharpe_median.toFixed(2)}</b><span>Sharpe IS của tham số ổn định</span></div>
+        <div class="kpi"><b>${S.s_sel_sharpe_median.toFixed(2)}</b><span>Sharpe OOS-select của tham số ổn định</span></div>
+        <div class="kpi"><b>${S.s_pct_profit.toFixed(0)}%</b><span>Fold forward có lãi (ổn định)</span></div>
+        <div class="kpi"><b>${S.s_pct_beat_bh.toFixed(0)}%</b><span>Fold hơn B&amp;H (return)</span></div>
       </div>
       ${wfChart(w.folds)}
       <table style="margin-top:8px"><tr><th>Ổn định qua fold</th><th>dl median (IQR)</th><th>dh median (IQR)</th><th>bước% median (IQR)</th><th>Cờ</th></tr>` +
-      ["peak", "flat"].map((k) => { const x = w.stab[k]; return `<tr><td>${k === "peak" ? "Đỉnh nhọn" : "Phẳng"}</td><td>${pc(x.dl_median)} (${pc(x.dl_iqr)})</td><td>${pc(x.dh_median)} (${pc(x.dh_iqr)})</td><td>${pc(x.step_pct_median)} (${pc(x.step_pct_iqr)})</td><td>${x.unstable ? "UNSTABLE" : "ổn định"}</td></tr>`; }).join("") +
+      ["stable", "flat", "peak"].map((k) => { const x = w.stab[k]; return `<tr><td>${k === "peak" ? "Đỉnh nhọn" : k === "flat" ? "Phẳng" : "Ổn định"}</td><td>${pc(x.dl_median)} (${pc(x.dl_iqr)})</td><td>${pc(x.dh_median)} (${pc(x.dh_iqr)})</td><td>${pc(x.step_pct_median)} (${pc(x.step_pct_iqr)})</td><td>${x.unstable ? "UNSTABLE" : "ổn định"}</td></tr>`; }).join("") +
       `</table><p class="note">${w.stab.peak.dh_median >= w.dhmax - 1e-9 ? "dh median nằm ở biên trên của không gian tìm kiếm: bộ tối ưu luôn đẩy dh lên mức tối đa (gần như giữ coin)." : ""}</p>
-      <table style="margin-top:8px"><tr><th>STEP 7: OOS, trung vị 15 fold</th><th>Sharpe</th><th>Return</th><th>Fold lãi</th></tr>` +
+      <table style="margin-top:8px"><tr><th>STEP 7: forward, trung vị ${S.folds} fold</th><th>Sharpe</th><th>Return</th><th>Fold lãi</th></tr>` +
       [["Buy &amp; Hold", S.bh_sharpe_median, S.bh_return_median, S.bh_pct_profit],
        ["Grid cố định mặc định (±10%, n=20)", S.def_sharpe_median, S.def_return_median, S.def_pct_profit],
-       ["Grid tối ưu: đỉnh nhọn", S.oos_sharpe_median, S.oos_return_median, S.pct_profit],
+       ["Grid tối ưu: ổn định (IS → OOS)", S.s_oos_sharpe_median, S.s_oos_return_median, S.s_pct_profit],
+       ["Grid tối ưu: đỉnh nhọn (IS)", S.oos_sharpe_median, S.oos_return_median, S.pct_profit],
        ["Grid tối ưu: phẳng", S.f_oos_sharpe_median, S.f_oos_return_median, S.f_pct_profit],
-       ["DGT (tham số phẳng)", S.dgt_sharpe_median, S.dgt_return_median, S.dgt_pct_profit],
+       ["DGT (tham số ổn định)", S.dgt_sharpe_median, S.dgt_return_median, S.dgt_pct_profit],
        ["DGT (lưới mặc định)", S.dgtdef_sharpe_median, S.dgtdef_return_median, null]].map((r) => `<tr><td>${r[0]}</td><td>${r[1].toFixed(2)}</td><td>${pct(r[2] * 100)}</td><td>${r[3] == null ? "–" : r[3].toFixed(0) + "%"}</td></tr>`).join("") +
       `</table><p class="note">DGT phá biên ${S.dgt_resets_median.toFixed(0)} lần/fold (trung vị) và trả phí tái cân bằng mỗi lần reset.</p>
-      <details><summary>Bảng fold</summary><table><tr><th>Fold</th><th>Test từ</th><th>dl</th><th>dh</th><th>n</th><th>mode</th><th>IS Sharpe</th><th>OOS Sharpe</th><th>OOS return</th><th>B&amp;H return</th><th>Default return</th><th>Giao dịch OOS</th></tr>` +
-      w.folds.map((r) => `<tr><td>${r.fold + 1}</td><td>${fmtDate(r.test_start)}</td><td>${pc(r.dl)}</td><td>${pc(r.dh)}</td><td>${r.n}</td><td>${r.mode}</td><td>${r.is_sharpe.toFixed(2)}</td><td>${r.oos_sharpe.toFixed(2)}</td><td>${pc(r.oos_return)}</td><td>${pc(r.bh_return)}</td><td>${pc(r.def_return)}</td><td>${r.oos_trades}</td></tr>`).join("") + "</table></details>";
+      <details><summary>Bảng fold</summary><table><tr><th>Fold</th><th>Forward từ</th><th>dl</th><th>dh</th><th>n</th><th>mode</th><th>IS Sharpe</th><th>OOS-select Sharpe</th><th>Forward Sharpe</th><th>Forward return</th><th>B&amp;H return</th><th>Default return</th><th>Lệnh khớp</th></tr>` +
+      w.folds.map((r) => `<tr><td>${r.fold + 1}</td><td>${fmtDate(r.test_start)}</td><td>${pc(r.s_dl)}</td><td>${pc(r.s_dh)}</td><td>${r.s_n}</td><td>${r.s_mode}</td><td>${r.s_is_sharpe.toFixed(2)}</td><td>${r.s_sel_sharpe.toFixed(2)}</td><td>${r.s_oos_sharpe.toFixed(2)}</td><td>${pc(r.s_oos_return)}</td><td>${pc(r.bh_return)}</td><td>${pc(r.def_return)}</td><td>${r.s_oos_trades}</td></tr>`).join("") + "</table></details>";
   }).join("");
 }
 
@@ -374,8 +377,8 @@ function renderStats() {
   if (!sh.length) { $("sens").innerHTML = `<p class="note">Chưa có dữ liệu. Chạy <code>python grid_optimizer.py --sensitivity</code> (chậm, tải thêm nến 5m).</p>`; return; }
   const labels = [...new Set(sh.flatMap((s) => D.sens[s].map((r) => r.kind + ":" + r.label)))];
   const name = (l) => (l.startsWith("fee:") ? "Phí " + l.slice(4) : "Timeframe " + l.slice(3));
-  $("sens").innerHTML = `<table><tr><th>Cấu hình</th>${sh.map((s) => `<th>${s.replace("USDT", "")} phẳng / nhọn / B&amp;H</th>`).join("")}</tr>` +
-    labels.map((l) => `<tr><td>${name(l)}</td>` + sh.map((s) => { const r = D.sens[s].find((q) => q.kind + ":" + q.label === l); return r ? `<td>${r.f_oos_sharpe_median.toFixed(2)} / ${r.oos_sharpe_median.toFixed(2)} / ${r.bh_sharpe_median.toFixed(2)}</td>` : "<td>–</td>"; }).join("") + "</tr>").join("") + "</table>";
+  $("sens").innerHTML = `<table><tr><th>Cấu hình</th>${sh.map((s) => `<th>${s.replace("USDT", "")} ổn định / phẳng / nhọn / B&amp;H</th>`).join("")}</tr>` +
+    labels.map((l) => `<tr><td>${name(l)}</td>` + sh.map((s) => { const r = D.sens[s].find((q) => q.kind + ":" + q.label === l); return r ? `<td>${r.s_oos_sharpe_median.toFixed(2)} / ${r.f_oos_sharpe_median.toFixed(2)} / ${r.oos_sharpe_median.toFixed(2)} / ${r.bh_sharpe_median.toFixed(2)}</td>` : "<td>–</td>"; }).join("") + "</tr>").join("") + "</table>";
 }
 
 function renderFinal() {

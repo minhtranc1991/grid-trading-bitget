@@ -61,7 +61,7 @@ def load_sweep(s):
             "top": top.round(4).to_dict("records"), "bottom": df.tail(5).round(4).to_dict("records"),
             "dl": [float(x) for x in pv.index], "n": [int(x) for x in pv.columns],
             "heat": [[None if pd.isna(v) else round(float(v), 2) for v in row] for row in pv.values],
-            "beat": float((df.sharpe > j["bh"]["sharpe"]).mean() * 100), "median": float(df.sharpe.median()),
+            "beat": float((df["return"] > j["bh"]["return"]).mean() * 100), "median": float(df.sharpe.median()),
             "topwide": int((top.dh == df.dh.max()).sum()), "dhmax": float(df.dh.max())}
 
 

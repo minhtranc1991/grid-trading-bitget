@@ -24,3 +24,14 @@ def test_buy_and_hold_and_trades():
     assert np.allclose(buy_and_hold([50, 100, 25]), [1, 2, 0.5])
     t, turn = grid_stats([100.5, 103.5, 100.5], 90, 110, 20)  # 3 bán + 2 mua lại = 5 lệnh khớp
     assert t == 5 and turn > 0
+
+
+def test_sortino_calmar_retwk_known_series():
+    # 4 bar: +2%, -1%, +2%, -1%; bars_per_year = 52 * 4 để 1 tuần = 4 bar
+    eq = np.cumprod([1, 1.02, 0.99, 1.02, 0.99])
+    r = np.array([0.02, -0.01, 0.02, -0.01])
+    m = metrics(eq, 52 * 4)
+    dd = np.sqrt(np.mean(np.minimum(r, 0) ** 2))
+    assert np.isclose(m["sortino"], r.mean() / dd * np.sqrt(52 * 4))
+    assert np.isclose(m["ret_wk"], m["return"])  # cửa sổ đúng 1 tuần
+    assert np.isclose(m["calmar"], m["return"] * 52 / abs(m["mdd"]))

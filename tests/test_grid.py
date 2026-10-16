@@ -89,3 +89,34 @@ def test_matches_independent_limit_order_sim():
             a = grid_equity(P, 90, 112, 12, mode, fee)
             b = _limit_order_sim(P, 90, 112, 12, mode, fee)
             assert np.abs(a - b).max() < 1e-9
+
+
+def test_decomposition_adds_up_and_isolates_cycles():
+    from grid_optimizer import grid_sim_x
+
+    # mỗi vòng 100.5 -> 98.5 -> 100.5: slot 9 mua 99 bán 100 = 1 chu kỳ, lãi lưới = 1 bước; vị thế về chỗ cũ nên không đổi
+    for m in (1, 4):
+        eq, trades, _, ex = grid_sim_x([100.5] + [98.5, 100.5] * m, 90, 110, 20, fee=0)
+        assert ex["cycles"] == m
+        assert np.isclose(ex["grid_profit"], m * 1.0 / CAP)
+        assert np.isclose(ex["inv_pnl"], 0.0, atol=1e-12)
+        assert np.isclose(ex["grid_profit"] + ex["inv_pnl"], eq[-1] - 1)
+
+
+def test_initial_inventory_sale_is_position_not_grid_profit():
+    from grid_optimizer import grid_sim_x
+
+    # giá chỉ tăng: bán các slot mua lúc vào (chưa ghép) nên lãi lưới = 0, toàn bộ là lợi nhuận vị thế
+    eq, trades, _, ex = grid_sim_x([100.5, 103.5], 90, 110, 20, fee=0)
+    assert trades == 3 and ex["cycles"] == 0 and ex["grid_profit"] == 0.0
+    assert np.isclose(ex["inv_pnl"], eq[-1] - 1) and ex["inv_pnl"] > 0
+
+
+def test_decomposition_with_fees_still_adds_up():
+    from grid_optimizer import grid_sim_x
+
+    rng = np.random.default_rng(3)
+    P = 100 * np.exp(np.cumsum(rng.normal(0, 0.01, 500)))
+    eq, _, _, ex = grid_sim_x(P, 90, 112, 12, "geometric", 0.001)
+    assert np.isclose(ex["grid_profit"] + ex["inv_pnl"], eq[-1] - 1)
+    assert ex["cycles"] > 0 and ex["grid_profit"] > 0  # có dao động nên có chu kỳ khép kín sinh lãi

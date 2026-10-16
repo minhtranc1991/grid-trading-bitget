@@ -48,42 +48,44 @@ Kiểm chứng: test tính tay (lên-xuống qua k line; mỗi vòng 100.5→98.
 
 **DGT (STEP 7):** `dgt_equity(prices, dl, dh, n, mode, fee)` dựng lại lưới quanh giá mới khi giá phá low/high, vốn mới = equity hiện tại; phá trên thì đang toàn tiền mặt, phá dưới thì đang giữ toàn coin; trả phí tái cân bằng mỗi lần reset. Khi không bao giờ phá biên, DGT trùng khít grid thường (có test).
 
-**Mục tiêu tối ưu (`--objective`, mặc định `return`):** lợi suất thuần quy về một tuần (`ret_wk`) để so cửa sổ IS 4 tuần với OOS 1 tuần. Sharpe, Sortino, Calmar chỉ để tham khảo; có thể đổi sang `sharpe|sortino|calmar`. Xếp hạng trong sweep, tham số phẳng và tham số ổn định (`min(score IS, score OOS)`) đều theo mục tiêu này.
+**Tách lợi suất làm hai phần và mục tiêu tối ưu (`--objective`, mặc định `grid`):**
+- **Lợi nhuận lưới** = tổng lãi các chu kỳ khép kín do chính lưới mua ở vạch dưới rồi bán ở vạch trên kế tiếp, đã trừ phí hai chiều (tương ứng "lợi nhuận chênh lệch giá" của bot Bitget). Đây là **mục tiêu tối ưu**, quy về một tuần để so cửa sổ IS 4 tuần với OOS 1 tuần.
+- **Lợi nhuận vị thế (chưa ghép)** = phần còn lại: giá lên/xuống với số coin lưới đang giữ (kể cả coin mua lúc vào và phí vào lệnh), giống Buy & Hold.
+- Lưới + vị thế = lợi suất tổng (có test). Sharpe, Sortino, Calmar và lợi suất tổng chỉ để tham khảo; `--objective return|sharpe|sortino|calmar` vẫn dùng được.
+- Tỷ lệ khớp: số chu kỳ khép kín mỗi ngày (`cycles_day`), và `bước lưới / ATR ngày`.
 
-**Bảng forward, lợi suất trung vị mỗi tuần (72 fold/cặp, mục tiêu = lợi suất):**
+**Kết quả forward, trung bình mỗi tuần (72 tuần/cặp, tham số ổn định, mục tiêu = lợi nhuận lưới):**
 
-| Chiến lược | BTC | ETH | PAXG | XAUT |
-|---|---|---|---|---|
-| Buy & Hold | −0.62% | +0.10% | **+0.77%** | **+0.71%** |
-| Grid cố định mặc định (±10%, n=20) | +0.09% | **+0.49%** | +0.41% | +0.37% |
-| Grid đỉnh nhọn (IS top-1) | +0.08% | +0.14% | +0.12% | +0.09% |
-| Grid phẳng | +0.08% | +0.20% | +0.19% | +0.16% |
-| Grid ổn định (IS → OOS) | +0.06% | +0.14% | +0.12% | +0.12% |
-| DGT (tham số ổn định) | +0.02% | −0.07% | +0.03% | −0.01% |
+| Cặp | Lưới | Vị thế | Tổng | Buy & Hold | Chu kỳ khép kín/ngày |
+|---|---|---|---|---|---|
+| BTC | **+0.40%** | −1.08% | −0.68% | −0.27% | 0.29 |
+| ETH | **+0.58%** | −1.28% | −0.69% | +0.30% | 0.21 |
+| PAXG | **+0.15%** | −0.37% | −0.22% | +0.36% | 0.14 |
+| XAUT | **+0.17%** | −0.38% | −0.21% | +0.35% | 0.14 |
 
-Sharpe forward trung vị: ổn định 2.12 / 1.58 / 3.20 / 2.65, đỉnh nhọn 2.23 / 1.45 / 2.98 / 2.35, B&H −0.67 / 0.29 / 1.63 / 1.89. Tỷ lệ tuần lãi (ổn định): 62% / 61% / 65% / 65%.
+Lưới mặc định ±10%, n=20 để so sánh (lưới / vị thế / tổng mỗi tuần): BTC +0.25% / −0.84% / −0.59%; ETH +0.48% / −1.34% / −0.87%; PAXG +0.09% / −0.08% / +0.02%; XAUT +0.09% / −0.08% / +0.01%; chu kỳ/ngày 0.79 / 1.57 / 0.14 / 0.14.
 
-**Phát hiện quan trọng: tối ưu lợi suất bị overfit nặng.** Lợi suất tuần trung vị của tham số ổn định ở IS là +1.03% / +1.92% / +0.67% / +0.61% nhưng chỉ còn +0.06% / +0.14% / +0.12% / +0.12% ở tuần forward (suy giảm ~80–95%). Đáng chú ý hơn, **lưới mặc định ±10%, n=20 không tối ưu còn cho lợi suất tuần cao hơn các cách chọn tối ưu** ở ETH, PAXG và XAUT. Tức là bước tối ưu hiện tại chưa tạo giá trị ngoài mẫu; cần cách chọn tham số bền vững hơn (xem `data/refs/papers/README.md`: PBO, vùng ổn định + cliff veto, tỷ lệ chống chịu OOS/IS).
+**Phát hiện chính:**
+1. **Cơ chế lưới hoạt động đúng: lợi nhuận lưới dương ở cả 4 cặp.** Tối ưu theo mục tiêu này cũng **bền hơn** mục tiêu lợi suất thuần: lãi lưới trung vị giảm từ IS sang forward khoảng 50–60% (BTC 0.57% → 0.28%/tuần), so với 80–95% khi tối ưu lợi suất thuần.
+2. **Nhưng phần vị thế lỗ lớn gấp 2–3 lần lãi lưới**, nên tổng âm ở cả 4 cặp. Tối ưu lợi nhuận lưới chọn range hẹp với ít lưới (dl và dh trung vị 1.5–3%, n trung vị 6): gặt bước lưới đều nhưng khi giá chạy ra khỏi range về phía dưới thì lưới ôm toàn bộ coin giảm giá.
+3. **Lưới mặc định rộng (±10%) ít chịu lỗ vị thế hơn** ở vàng (tổng ≈ 0%) dù lãi lưới thấp hơn: range rộng giữ vị thế nhỏ hơn.
+4. Trên vàng, grid kém B&H **có ý nghĩa thống kê** (CI hiệu Sharpe: PAXG [−3.55, −0.17], XAUT [−3.58, −0.23]); crypto chứa 0.
 
-So với lần chạy mục tiêu Sharpe: lợi suất gộp BTC −17.8% → −40.1%, ETH −1.2% → −28.4%, PAXG −4.6% → +3.6%, XAUT −6.5% → +2.2%. Mục tiêu lợi suất làm kết quả crypto **xấu đi** (chọn lưới giữ nhiều coin rồi gặp thị trường giảm), vàng nhỉnh hơn nhưng vẫn thua B&H rất xa.
+**Thống kê (STEP 8):** CI 95% của Sharpe gộp (lợi suất tổng): BTC −1.26 [−2.83, 0.35]; ETH −0.79 [−2.40, 0.91]; PAXG −0.63 [−2.05, 0.79]; XAUT −0.63 [−2.10, 0.82]. Độ nhạy phí/khung nến xem mục 11 của báo cáo.
 
-**Thống kê (STEP 8):** `block_bootstrap_sharpe` (khối 1 ngày, 2000 lần) cho CI 95% của Sharpe gộp các tuần forward; `deflated_sharpe` trả PSR(0) và DSR theo số tổ hợp thử (2200 crypto, 1408 vàng).
-Sharpe gộp (tham số ổn định) [CI 95%]: BTC −1.22 [−2.80, 0.46]; ETH −0.36 [−2.05, 1.40]; PAXG +0.23 [−1.25, 1.76]; XAUT +0.18 [−1.35, 1.75]. CI của hiệu grid − B&H chứa 0 ở cả 4 cặp (BTC [−2.33, 0.83], ETH [−2.47, 1.00], PAXG [−2.56, 0.45], XAUT [−2.68, 0.33]). Độ nhạy phí và khung nến xem mục 11 của báo cáo.
+**Tóm tắt cuối (STEP 9, `results/summary.csv`)**: IS 28d / OOS 7d / forward 7d, phí 0.1%, 72 fold/cặp, mục tiêu lợi nhuận lưới, tham số ổn định.
 
-**Tóm tắt cuối (STEP 9, `results/summary.csv`)**: IS 28d / OOS 7d / forward 7d, phí 0.1%, 72 fold/cặp, mục tiêu lợi suất, tham số ổn định.
+| Cặp | Return gộp | B&H | MDD | MDD B&H | Sharpe gộp [CI 95%] | Tuần lãi | Khuyến nghị dl / dh / n / bước% / mode |
+|---|---|---|---|---|---|---|---|
+| BTC | −41.0% | −26.9% | −48.8% | −55.7% | −1.26 [−2.83, 0.35] | 60% | 2% / 12% / 8 / 1.56% / arithmetic |
+| ETH | −44.2% | −6.0% | −59.2% | −71.4% | −0.79 [−2.40, 0.91] | 65% | 3% / 2% / 4 / 1.26% / geometric |
+| PAXG | −16.1% | +23.9% | −25.7% | −30.8% | −0.63 [−2.05, 0.79] | 65% | 2% / 0.5% / 4 / 0.62% / arithmetic (UNSTABLE) |
+| XAUT | −15.4% | +23.6% | −26.5% | −30.5% | −0.63 [−2.10, 0.82] | 68% | 1.5% / 0.5% / 4 / 0.50% / geometric |
 
-| Cặp | Return gộp | B&H | MDD | MDD B&H | Sharpe gộp [CI 95%] | Sortino (grid / B&H) | Calmar (grid / B&H) | Tuần lãi | Khuyến nghị dl / dh / n / bước% / mode |
-|---|---|---|---|---|---|---|---|---|---|
-| BTC | −40.1% | −26.9% | −48.6% | −55.7% | −1.22 [−2.80, 0.46] | −1.69 / −0.48 | −0.60 / −0.35 | 62% | 2% / 18% / 8 / 2.35% / geometric |
-| ETH | −28.4% | −6.0% | −53.9% | −71.4% | −0.36 [−2.05, 1.40] | −0.51 / +0.34 | −0.38 / −0.06 | 61% | 5% / 12% / 8 / 1.90% / arithmetic |
-| PAXG | +3.6% | +23.9% | −20.6% | −30.8% | +0.23 [−1.25, 1.76] | +0.32 / +1.00 | +0.13 / +0.56 | 65% | 8% / 0.5% / 8 / 1.11% / geometric |
-| XAUT | +2.2% | +23.6% | −21.1% | −30.5% | +0.18 [−1.35, 1.75] | +0.24 / +1.02 | +0.08 / +0.56 | 65% | 8% / 0.5% / 10 / 0.89% / geometric |
-
-**Kết luận (trên lõi đã sửa, mục tiêu lợi suất):**
-- **Grid không vượt giữ coin về lợi nhuận ở cả 4 cặp**; ở BTC và ETH còn lỗ nhiều hơn B&H. Chỉ còn lợi thế là drawdown nhỏ hơn (MDD giảm ~7–18 điểm %).
-- **Chưa có bằng chứng thống kê về edge:** CI 95% của Sharpe gộp chứa 0 ở cả 4 cặp, CI của hiệu so với B&H cũng chứa 0.
-- **Vấn đề nằm ở bước chọn tham số**, không ở mô phỏng: tham số tối ưu theo lợi suất suy giảm ~80–95% từ IS sang forward và kém cả lưới mặc định chưa tối ưu.
-- Range khuyến nghị cho vàng vẫn rất lệch (`dh` = 0.5%); tham số cờ UNSTABLE ở cả 4 cặp. Chỉ để thử nghiệm.
+**Kết luận (trên lõi đã sửa, mục tiêu lợi nhuận lưới):**
+- Lưới **tạo ra lợi nhuận chênh lệch giá thật** (dương ở 4/4 cặp), nhưng phần vị thế chưa ghép đang ăn hết và hơn thế; tổng không vượt B&H ở cặp nào về lợi nhuận gộp.
+- Chưa có bằng chứng thống kê về edge; vàng kém B&H có ý nghĩa thống kê.
+- **Vấn đề nằm ở rủi ro vị thế**, không ở khả năng khớp lệnh: tối ưu chỉ lợi nhuận lưới mà không kiểm soát vị thế chọn range hẹp, dễ bị phá biên. Hướng xử lý tiếp theo: ràng buộc range (như Yeh et al.: mỗi phía ≥ 5%) hoặc đưa phạt vị thế/drawdown vào bước chọn tham số ổn định.
 
 **Trần số lưới:** `--max-grids N` (mặc định `MAX_GRIDS = 100`, cần xác minh trong app Bitget) lọc `n ≤ N` ở mọi bước (sweep, walk-forward, stats, pipeline cuối). Không gian tìm kiếm quét `n ∈ {4, 6, 8, 10, 15, 20, 30, 40, 60, 80, 100}`; `n` khuyến nghị hiện là 6–20, nên trần 100 không phải ràng buộc đang cắn.
 

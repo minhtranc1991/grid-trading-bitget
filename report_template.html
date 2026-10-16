@@ -612,7 +612,7 @@ function renderInsights() {
   const s1 = (s) => s.replace("USDT", ""), mean = (a) => { const v = a.filter((x) => x != null); return v.reduce((p, q) => p + q, 0) / v.length; };
   // 1. giá
   const end = SYMS.map((s) => [s, D.px[s][D.px[s].length - 1] - 100]).sort((a, b) => b[1] - a[1]);
-  addInsight("1.", `Trong giai đoạn này ${s1(end[0][0])} tốt nhất (${pct(end[0][1], 0)}), ${s1(end[end.length - 1][0])} kém nhất (${pct(end[end.length - 1][1], 0)}). Hai token vàng gần như đi cùng nhau, nên nên coi chúng là một nguồn thông tin, không phải hai.`);
+  addInsight("1.", `Trong giai đoạn này ${s1(end[0][0])} tốt nhất (${pct(end[0][1], 0)}), ${s1(end[end.length - 1][0])} kém nhất (${pct(end[end.length - 1][1], 0)}). Hai token vàng gần như đi cùng nhau, nên coi chúng là một nguồn thông tin, không phải hai.`);
   // 2. drawdown
   const mdd = SYMS.map((s) => [s, D.met[s].mdd * 100]).sort((a, b) => a[1] - b[1]);
   addInsight("2.", `Giữ coin từng sụt tối đa ${mdd[0][1].toFixed(0)}% (${s1(mdd[0][0])}) và ${mdd[mdd.length - 1][1].toFixed(0)}% (${s1(mdd[mdd.length - 1][0])}). Đây là mức "đau" mà grid cần giảm được thì mới có ý nghĩa thực tế.`);

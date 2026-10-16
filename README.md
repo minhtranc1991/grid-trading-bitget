@@ -17,7 +17,10 @@ python grid_optimizer.py --symbols BTCUSDT --sweep --window 90 --fee 0.001   # c
 python grid_optimizer.py --walkforward                    # STEP 5: IS 28 / OOS 7 / forward 7 / step 7 -> results/{SYMBOL}_folds.csv
 python grid_optimizer.py --stats                          # STEP 8: CI bootstrap + Deflated Sharpe -> results/stats_{SYMBOL}.json
 python grid_optimizer.py --sensitivity                    # STEP 8: độ nhạy phí x0.5/1/2 và timeframe 5m/15m/1h (chậm, ~10 phút, tải nến 5m/1h)
-python make_report.py                                     # cập nhật results/report.html
+python grid_optimizer.py --dca --dca-amount 50 --min-order 2   # DCA $50 mỗi đầu tháng: grid vs grid+re-range vs DCA Buy & Hold -> results/dca_{SYMBOL}.json
+python grid_optimizer.py --ab                             # so sánh có/không ràng buộc lưới rộng và dày -> results/ab_{SYMBOL}.json
+python grid_optimizer.py --min-dl 0 --min-range 0 --min-grids 0   # tắt ràng buộc rộng và dày
+python make_report.py                                     # cập nhật results/report.html (cũng tự chạy sau mỗi lần chạy grid_optimizer.py)
 pytest
 ```
 
@@ -26,7 +29,8 @@ CLI tải/cache nến vào `data/{symbol}_{tf}.csv`, in số nến, khoảng th�
 Lần sau chạy chỉ tải phần thiếu. CSV nằm trong `.gitignore`. Mọi lần chạy được ghi nối vào `results/run.log` (dùng `log.info` cho các step sau).
 
 **Báo cáo trực quan:** `results/report.html` (tự đủ, mở bằng trình duyệt) được **tự động tạo lại sau mỗi lần chạy `grid_optimizer.py`** (tắt bằng `--no-report`); cũng có thể chạy riêng `python make_report.py`.
-Các mục: 1 giá chuẩn hóa, 2 drawdown, 3 ATR(14) daily (% giá close), 4 phân phối lợi suất, 5 scatter regime theo ngày (NORMAL/STRESS: ngày lệch quá 1.5σ so với 30 ngày trước), 6 chỉ số B&H, 7 lợi suất theo tháng, 8 tương quan, 9 lịch fold thực tế (IS/OOS/forward), 10 tóm tắt tối ưu + walk-forward, 11 ý nghĩa thống kê và độ nhạy (giải thích dễ hiểu, thanh khoảng tin cậy), 12 kết luận và tham số khuyến nghị theo từng cặp, 13 lịch sử chạy.
+Mặc định **thu gọn tất cả các mục** (chỉ hiện dòng tóm tắt); nút "Mở rộng tất cả"/"Thu gọn tất cả" và từng mục, trạng thái được nhớ trong trình duyệt.
+Các mục: 1 giá chuẩn hóa, 2 drawdown, 3 ATR(14) daily (% giá close), 4 phân phối lợi suất, 5 scatter regime theo ngày (NORMAL/STRESS: ngày lệch quá 1.5σ so với 30 ngày trước), 6 chỉ số B&H, 7 lợi suất theo tháng, 8 tương quan, 9 lịch fold thực tế (IS/OOS/forward), 10 tóm tắt tối ưu + walk-forward, 11 ý nghĩa thống kê và độ nhạy (giải thích dễ hiểu, thanh khoảng tin cậy), 12 kết luận và tham số khuyến nghị theo từng cặp, 13 DCA mỗi đầu tháng (grid so với DCA Buy & Hold), 14 lịch sử chạy.
 
 **Lõi mô phỏng (STEP 2):** `grid_sim(prices, low, high, n, mode, fee)` → (equity chuẩn hóa vốn đầu = 1, số lệnh khớp, turnover). n slot, mỗi slot 1 đơn vị coin; slot k mua ở L_k và bán ở L_{k+1}. Lúc vào, slot có line bán nằm trên giá đầu giữ coin (mua tại P0, tính phí), slot còn lại dự trữ tiền L_k. Giá cắt lên L_j thì slot j−1 bán nếu đang giữ; cắt xuống L_j thì slot j mua nếu đang không giữ. Duyệt theo **sự kiện cắt line** (không theo từng bar) nên sweep 2200 tổ hợp mất ~0.6 giây. Equity **phụ thuộc đường đi** (có trễ): dao động giữa hai line sinh đúng một bước lãi mỗi vòng khép kín.
 Kiểm chứng: test tính tay (lên-xuống qua k line; mỗi vòng 100.5→98.5→100.5 lãi đúng 1 bước), và đối chiếu với một mô phỏng sổ lệnh limit viết độc lập, sai số < 1e-9 ở cả arithmetic lẫn geometric.
@@ -86,6 +90,28 @@ Kiểm chứng: test tính tay (lên-xuống qua k line; mỗi vòng 100.5→98.
 - **Chưa vượt giữ coin về lợi nhuận ở ETH và vàng**: vàng đi lên +24% mà lưới bán sớm; lưới mặc định không tối ưu (±10%, n=20) vẫn ngang hoặc nhỉnh hơn tối ưu ở vàng (tổng/tuần +0.015% và +0.009% so với −0.061% và −0.029%).
 - **Chưa có bằng chứng thống kê về edge:** CI Sharpe chứa 0 ở cả 4 cặp. Phần cải thiện là kiểm soát rủi ro, không phải alpha.
 - Hướng tiếp theo: mô phỏng re-range khi giá phá đáy (đưa USDT dư vào lưới mới thấp hơn) thay vì reset cứng theo tuần; thêm tham số vốn để lại (`idle`) và phí dự trữ để khớp bot thật.
+
+**Re-range khi giá phá đáy (mô phỏng cách người dùng bot sửa phạm vi sau khi giá sập):** khi giá đóng cửa dưới đáy lưới, dựng lại lưới quanh giá mới với cùng dl, dh, n; bán bớt coin để có tiền cho các lệnh mua mới ở vạch thấp hơn (tính phí tái cân bằng). `dgt_equity(..., down_only=True)`; chỉ re-range phía dưới, phá đỉnh thì giữ nguyên.
+
+| Cặp | Tổng/tuần: reset cuối tuần | Tổng/tuần: re-range | Tuần sập: reset | Tuần sập: re-range | Giữ coin (tuần sập) | Re-range/tuần |
+|---|---|---|---|---|---|---|
+| BTC | −0.41% | −0.49% | −3.8% | −4.2% | −8.3% | 0.07 |
+| ETH | −0.24% | −0.52% | −5.1% | −5.9% | −10.6% | 0.12 |
+| PAXG | −0.06% | −0.09% | −3.4% | −3.8% | −7.0% | 0.01 |
+| XAUT | −0.03% | −0.15% | −3.3% | −5.0% | −7.0% | 0.03 |
+
+Re-range **không cải thiện** và hơi tệ hơn reset cuối tuần: với lưới rộng và dày (dl ≥ 12%) giá hiếm khi phá đáy (1–12% số tuần), lệnh mua phía dưới đã có sẵn nên lưới đã phủ phần lớn cú rơi; bán bớt coin ngay lúc phá đáy chỉ trả thêm phí và bỏ lỡ nhịp hồi.
+
+**DCA $50 mỗi đầu tháng, so với DCA Buy & Hold:** vốn đầu $50, nạp thêm $50 vào tuần đầu của mỗi tháng (18 lần, tổng $900). Cả ba tài khoản cùng dòng tiền; DCA Buy & Hold mua coin ngay mỗi lần nạp (phí 0.1%). Mỗi lệnh grid tối thiểu **$2** theo vốn đã nạp tại thời điểm chọn tham số (lệnh nhỏ nhất = lượng coin mỗi lưới × giá vạch thấp nhất), nên vốn $50 chỉ cho lưới thưa hơn và vốn lớn dần cho lưới dày hơn. Giá trị tuần được nối tiếp: (vốn + nạp) × (1 + lợi suất grid của tuần).
+
+| Cặp | Grid (reset tuần) | Grid + re-range | DCA Buy & Hold | Lỗ chưa chốt tệ nhất: grid / DCA B&H |
+|---|---|---|---|---|
+| BTC | $789.9 (−12.2%, IRR −17%) | $772.5 (−14.2%) | **$871.4 (−3.2%, IRR −4%)** | −20.4% / −35.7% |
+| ETH | $810.7 (−9.9%, IRR −14%) | $742.4 (−17.5%) | **$892.1 (−0.9%, IRR −1%)** | −26.8% / −42.0% |
+| PAXG | $850.7 (−5.5%, IRR −8%) | $841.2 (−6.5%) | **$926.1 (+2.9%, IRR +4%)** | −5.9% / −2.2% |
+| XAUT | $854.6 (−5.0%, IRR −7%) | $811.3 (−9.9%) | **$928.5 (+3.2%, IRR +4%)** | −5.5% / −2.2% |
+
+DCA Buy & Hold **thắng grid ở cả 4 cặp** (hơn khoảng 9 điểm % ở crypto và 8 điểm % ở vàng). Grid chỉ có lợi thế ở rủi ro của crypto: lỗ chưa chốt tệ nhất nông hơn DCA Buy & Hold (BTC −20% so với −36%, ETH −27% so với −42%); ở vàng DCA Buy & Hold vừa lãi vừa ít lỗ hơn. Re-range làm kết quả DCA xấu thêm.
 
 **Trần số lưới:** `--max-grids N` (mặc định `MAX_GRIDS = 100`, cần xác minh trong app Bitget) lọc `n ≤ N` ở mọi bước (sweep, walk-forward, stats, pipeline cuối). Không gian tìm kiếm quét `n ∈ {4, 6, 8, 10, 15, 20, 30, 40, 60, 80, 100}`; `n` khuyến nghị hiện là 6–20, nên trần 100 không phải ràng buộc đang cắn.
 

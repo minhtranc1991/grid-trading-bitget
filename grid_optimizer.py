@@ -215,6 +215,8 @@ MIN_DL = 0.10  # phủ ít nhất 10% phía DƯỚI giá đầu: có sẵn lện
 MIN_RANGE = 0.12  # tổng độ rộng dl + dh
 MIN_N = 14  # số lưới tối thiểu
 CRASH_TH = -0.05  # tuần "sập": Buy & Hold giảm hơn 5%
+DCA_AMOUNT = 50.0  # USD nạp vào đầu mỗi tháng (và vốn ban đầu)
+MIN_ORDER_USD = 2.0  # giá trị tối thiểu của mỗi lệnh grid (USD)
 N_LIST = [4, 6, 8, 10, 15, 20, 30, 40, 60, 80, 100]
 D_CRYPTO = [0.01, 0.02, 0.03, 0.05, 0.08, 0.12, 0.18, 0.25, 0.35, 0.50]
 D_GOLD = [0.0025, 0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.08, 0.12, 0.15, 0.20]
@@ -234,9 +236,11 @@ def step_pct(low, high, n, mode):
 
 
 def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, min_trades=20, max_grids=MAX_GRIDS, objective=None,
-          min_dl=None, min_range=None, min_n=None):
+          min_dl=None, min_range=None, min_n=None, capital=None, min_order=None):
     """Quét lưới tham số, trả DataFrame sắp theo score (chỉ số mục tiêu) giảm dần. IN-SAMPLE.
-    Ràng buộc lưới rộng và dày: dl >= min_dl, dl + dh >= min_range, n >= min_n (mặc định MIN_DL, MIN_RANGE, MIN_N)."""
+    Ràng buộc lưới rộng và dày: dl >= min_dl, dl + dh >= min_range, n >= min_n (mặc định MIN_DL, MIN_RANGE, MIN_N).
+    capital (USD) + min_order: loại cấu hình có lệnh nhỏ nhất (lưới thấp nhất) dưới min_order USD với vốn đó."""
+    min_order = MIN_ORDER_USD if min_order is None else min_order
     min_dl = MIN_DL if min_dl is None else min_dl
     min_range = MIN_RANGE if min_range is None else min_range
     min_n = MIN_N if min_n is None else min_n
@@ -256,6 +260,12 @@ def sweep(prices, space, fee, bars_per_year=BARS_PER_YEAR["15m"], safety=2.0, mi
                     st = step_pct(low, high, n, mode)
                     if st < 2 * fee * safety:  # loại range hẹp + nhiều lưới: mọi lưới liền kề phải bù đủ phí khứ hồi
                         continue
+                    if capital is not None:  # lệnh nhỏ nhất = lượng coin mỗi lưới · giá vạch thấp nhất
+                        Lc = _lines(low, high, n, mode)
+                        hc = Lc[1:] > p0
+                        qty = capital / (hc.sum() * p0 + Lc[:-1][~hc].sum())
+                        if qty * Lc[0] < min_order:
+                            continue
                     eq, trades, turn, ex = grid_sim_x(P, low, high, n, mode, fee)
                     if trades < min_trades:
                         continue
@@ -323,8 +333,9 @@ DEFAULT_GRID = {"dl": 0.10, "dh": 0.10, "n": 20, "mode": "arithmetic"}  # lướ
 
 
 # --- STEP 7: baseline DGT (reset lưới khi giá phá biên, Chen et al.) ---
-def dgt_equity(prices, dl, dh, n, mode="arithmetic", fee=0.0, return_resets=False):
-    """Lưới tương đối (dl, dh, n) đặt tại giá đầu; khi giá phá low/high thì dựng lại quanh giá mới với vốn = equity hiện tại.
+def dgt_equity(prices, dl, dh, n, mode="arithmetic", fee=0.0, return_resets=False, down_only=False):
+    """down_only=True: chỉ dựng lại lưới (re-range) khi giá phá ĐÁY; phá đỉnh thì giữ nguyên (đứng ngoài). Mặc định: cả hai phía.
+    Lưới tương đối (dl, dh, n) đặt tại giá đầu; khi giá phá low/high thì dựng lại quanh giá mới với vốn = equity hiện tại.
     Phá trên: lưới đã bán hết -> toàn tiền mặt, tái đầu tư vào lưới mới. Phá dưới: lưới đang giữ toàn coin, vốn mới = giá trị coin + tiền.
     Phí tái cân bằng = fee · phần vốn phải mua/bán để chuyển sang trạng thái ban đầu của lưới mới."""
     P = np.asarray(prices, float)
@@ -332,7 +343,7 @@ def dgt_equity(prices, dl, dh, n, mode="arithmetic", fee=0.0, return_resets=Fals
     while True:
         p0 = P[start]
         low, high = p0 * (1 - dl), p0 * (1 + dh)
-        out = (P[start:] < low) | (P[start:] > high)
+        out = (P[start:] < low) if down_only else ((P[start:] < low) | (P[start:] > high))
         end = start + int(np.argmax(out)) if out.any() else T - 1
         e = grid_equity(P[start:end + 1], low, high, n, mode, fee, entry_fee=first)  # phí vào của lưới mới nằm ở bước tái cân bằng
         first = False
@@ -461,9 +472,9 @@ JOBS = 1  # số tiến trình chạy song song các fold (CLI --jobs đặt m�
 
 def _wf_fold(t):
     """Một fold độc lập (chạy được trong tiến trình con): IS -> OOS chọn tham số ổn định -> forward."""
-    k, tr, sel, te, ts_bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective, cons = t
+    k, tr, sel, te, ts_bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective, cons, capital = t
     bpy = BARS_PER_YEAR[tf]
-    res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids, objective=objective, min_dl=cons[0], min_range=cons[1], min_n=cons[2])
+    res = sweep(tr, space, fee, bpy, safety, max_grids=max_grids, objective=objective, min_dl=cons[0], min_range=cons[1], min_n=cons[2], capital=capital)
     if res.empty:
         return k, None
     best = res.iloc[0]  # đỉnh in-sample
@@ -479,10 +490,13 @@ def _wf_fold(t):
         dm = metrics(deq, bpy)
         deq2, dres2 = dgt_equity(te, **DEFAULT_GRID, fee=fee, return_resets=True)
         dm2 = metrics(deq2, bpy)
+        rq, rres = dgt_equity(te, st["dl"], st["dh"], st["n"], st["mode"], fee, True, down_only=True)  # re-range khi giá phá đáy
+        rm = metrics(rq, bpy)
     else:
         dm = dm2 = {k_: np.nan for k_ in ("sharpe", "sortino", "calmar", "ret_wk", "return", "mdd", "grid_wk", "inv_wk", "cycles_day")}
-        dres = dres2 = np.nan
-    ex = {}
+        dres = dres2 = rres = np.nan
+        rm = {k_: np.nan for k_ in ("sharpe", "return", "mdd", "ret_wk")}
+    ex = {"rr_return": rm["return"], "rr_retwk": rm["ret_wk"], "rr_mdd": rm["mdd"], "rr_sharpe": rm["sharpe"], "rr_resets": rres}
     for p, m_ in (("oos", oos), ("f_oos", foos), ("s_oos", soos), ("def", dfl), ("bh", bh), ("dgt", dm), ("dgtdef", dm2)):
         ex.update({p + "_sortino": m_["sortino"], p + "_calmar": m_["calmar"], p + "_retwk": m_["ret_wk"],
                    p + "_gridwk": m_["grid_wk"], p + "_invwk": m_["inv_wk"], p + "_cycday": m_["cycles_day"]})
@@ -507,31 +521,39 @@ def _wf_fold(t):
         "s_is_score": st["is_score"], "s_sel_score": st["sel_score"], "f_is_score": float(fl.score), "is_score": float(best.score), **ex}
 
 
-def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, step_days=7, space=None, safety=2.0,
-                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K, jobs=None, objective=None,
-                 min_dl=None, min_range=None, min_n=None):
-    """Mỗi fold (trượt step_days):
-      IS     [a, b)  : sweep, tìm tham số tối ưu (đỉnh nhọn và phẳng)
-      OOS    [b, s)  : chấm các ứng viên của IS, chọn tham số ổn định (tốt ở cả IS và OOS)
-      FORWARD[s, c)  : áp tham số tại giá đầu tuần, đo hiệu suất. Chưa từng dùng để chọn nên là phép thử sạch.
-    Các fold độc lập nên chạy song song bằng jobs tiến trình (kết quả y hệt chạy tuần tự)."""
-    select_days = SELECT_DAYS if select_days is None else select_days
-    jobs = JOBS if jobs is None else jobs
-    objective = OBJECTIVE if objective is None else objective
-    cons = (MIN_DL if min_dl is None else min_dl, MIN_RANGE if min_range is None else min_range, MIN_N if min_n is None else min_n)
-    ts, px = df.ts.values, df.close.values
-    space, tasks, k = space or space_for(symbol), [], 0
+def fold_windows(ts, tf, train_days=28, select_days=7, test_days=7, step_days=7):
+    """Danh sách (k, i0, i1, i2, i3) chỉ số mảng cho IS [i0,i1), OOS [i1,i2), forward [i2,i3)."""
+    out, k = [], 0
     while True:
         a = ts[0] + k * step_days * DAY_MS
         b = a + train_days * DAY_MS
         s_end = b + select_days * DAY_MS
         c = s_end + test_days * DAY_MS
         if c > ts[-1] + BAR_MS[tf]:
-            break
-        i0, i1, i2, i3 = np.searchsorted(ts, [a, b, s_end, c])
-        bounds = (int(ts[i0]), int(ts[i1 - 1]), int(ts[i2 - 1]), int(ts[i2]), int(ts[i3 - 1]))
-        tasks.append((k, px[i0:i1], px[i1:i2], px[i2:i3], bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective, cons))
+            return out
+        out.append((k, *[int(x) for x in np.searchsorted(ts, [a, b, s_end, c])]))
         k += 1
+
+
+def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, step_days=7, space=None, safety=2.0,
+                 with_dgt=True, max_grids=MAX_GRIDS, select_days=None, top_k=TOP_K, jobs=None, objective=None,
+                 min_dl=None, min_range=None, min_n=None, capitals=None):
+    """Mỗi fold (trượt step_days):
+      IS     [a, b)  : sweep, tìm tham số tối ưu (đỉnh nhọn và phẳng)
+      OOS    [b, s)  : chấm các ứng viên của IS, chọn tham số ổn định (tốt ở cả IS và OOS)
+      FORWARD[s, c)  : áp tham số tại giá đầu tuần, đo hiệu suất. Chưa từng dùng để chọn nên là phép thử sạch.
+    capitals: danh sách vốn (USD) theo chỉ số fold, dùng cho ràng buộc lệnh tối thiểu MIN_ORDER_USD (None = bỏ qua).
+    Các fold độc lập nên chạy song song bằng jobs tiến trình (kết quả y hệt chạy tuần tự)."""
+    select_days = SELECT_DAYS if select_days is None else select_days
+    jobs = JOBS if jobs is None else jobs
+    objective = OBJECTIVE if objective is None else objective
+    cons = (MIN_DL if min_dl is None else min_dl, MIN_RANGE if min_range is None else min_range, MIN_N if min_n is None else min_n)
+    ts, px = df.ts.values, df.close.values
+    space, tasks = space or space_for(symbol), []
+    for k, i0, i1, i2, i3 in fold_windows(ts, tf, train_days, select_days, test_days, step_days):
+        bounds = (int(ts[i0]), int(ts[i1 - 1]), int(ts[i2 - 1]), int(ts[i2]), int(ts[i3 - 1]))
+        cap = None if capitals is None else float(capitals[k])
+        tasks.append((k, px[i0:i1], px[i1:i2], px[i2:i3], bounds, symbol, tf, fee, space, safety, max_grids, with_dgt, top_k, objective, cons, cap))
     if jobs > 1 and len(tasks) > 1:
         out = list(_get_pool(jobs).map(_wf_fold, tasks))
     else:
@@ -543,6 +565,16 @@ def walk_forward(df, tf, symbol, fee=DEFAULT_FEE, train_days=28, test_days=7, st
         else:
             rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _rr_stats(f):
+    nan = float("nan")
+    if "rr_return" not in f:
+        return {}
+    mask = f.bh_return < CRASH_TH
+    return {"rr_retwk_mean": float(f.rr_retwk.mean()), "rr_pct_profit": float((f.rr_return > 0).mean() * 100),
+            "rr_crash_ret": float(f.rr_return[mask].mean()) if mask.any() else nan, "rr_resets_mean": float(f.rr_resets.mean()),
+            "rr_mdd_median": float(f.rr_mdd.median())}
 
 
 def _crash_stats(f):
@@ -581,7 +613,7 @@ def wf_summary(f):
                for b in ("bh", "def", "oos", "f_oos", "s_oos", "dgt", "dgtdef") for k in ("retwk", "sortino", "calmar")},
             **{f"{b}_{k}_{a}": (float(getattr(f[f"{b}_{k}"], a)()) if f"{b}_{k}" in f else float("nan"))
                for b in ("bh", "def", "oos", "f_oos", "s_oos") for k in ("gridwk", "invwk", "cycday", "retwk") for a in ("median", "mean")},
-            **_crash_stats(f)}
+            **_crash_stats(f), **_rr_stats(f)}
 
 
 def run_wf(symbol, tf, df, train, test, step, fee, max_grids=MAX_GRIDS):
@@ -720,6 +752,61 @@ def run_ab(symbol, tf, df, fee, train, test, step, max_grids=MAX_GRIDS):
     return out
 
 
+def dca_plan(test_starts, amount=DCA_AMOUNT):
+    """Nạp `amount` ở tuần forward đầu tiên và ở tuần đầu tiên của mỗi tháng dương lịch (UTC). Trả (nạp mỗi tuần, tổng đã nạp lũy kế)."""
+    dep, last = [], None
+    for t in test_starts:
+        m = pd.Timestamp(int(t), unit="ms").strftime("%Y-%m")
+        dep.append(float(amount) if m != last else 0.0)
+        last = m
+    return dep, list(np.cumsum(dep))
+
+
+def xirr(days, flows):
+    """Lãi suất năm (IRR) của dòng tiền theo ngày; bisection. flows âm = nạp, dương = rút/giá trị cuối."""
+    f = lambda r: sum(c / (1 + r) ** (d / 365.0) for d, c in zip(days, flows))
+    lo, hi = -0.99, 100.0
+    if f(lo) * f(hi) > 0:
+        return float("nan")
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if f(lo) * f(mid) > 0 else (lo, mid)
+    return (lo + hi) / 2
+
+
+def run_dca(symbol, tf, df, fee, train, test, step, max_grids=MAX_GRIDS, amount=DCA_AMOUNT):
+    """DCA `amount` USD mỗi đầu tháng (vốn đầu cũng `amount`): grid (reset tuần), grid + re-range khi phá đáy, và DCA Buy & Hold.
+    Lệnh grid tối thiểu MIN_ORDER_USD theo vốn đã nạp tại thời điểm chọn tham số."""
+    ts, px = df.ts.values, df.close.values
+    wins = fold_windows(ts, tf, train, SELECT_DAYS, test, step)
+    starts = [int(ts[w[3]]) for w in wins]
+    dep, cum = dca_plan(starts, amount)
+    f = walk_forward(df, tf, symbol, fee, train, test, step, max_grids=max_grids, capitals=cum, with_dgt=True)
+    price = lambda t: float(px[np.searchsorted(ts, t)])
+    grid = rr = inv = units = 0.0
+    T, I, G, R, B, days0, flows = [], [], [], [], [], [], []
+    t_first = starts[0]
+    for r in f.itertuples():
+        d = dep[r.fold]
+        p0, p1 = price(r.test_start), price(r.test_end)
+        grid, rr = (grid + d) * (1 + r.s_oos_return), (rr + d) * (1 + r.rr_return)
+        inv += d
+        units += d * (1 - fee) / p0
+        T.append(int(r.test_end)); I.append(inv); G.append(grid); R.append(rr); B.append(units * p1)
+        if d:
+            days0.append((r.test_start - t_first) / DAY_MS); flows.append(-d)
+    end_day = (T[-1] - t_first) / DAY_MS
+    out = {"symbol": symbol, "amount": amount, "min_order": MIN_ORDER_USD, "weeks": len(T), "deposits": int(sum(1 for d in dep if d)), "invested": inv,
+           "series": {"t": T, "invested": I, "grid": G, "rerange": R, "bh": B}}
+    for name, v in (("grid", G), ("rerange", R), ("bh", B)):
+        out[name] = {"final": v[-1], "roi": v[-1] / inv - 1, "irr": xirr(days0 + [end_day], flows + [v[-1]]),
+                     "worst_vs_invested": float(min(v[i] / I[i] - 1 for i in range(len(v))))}
+    (RESULTS_DIR / f"dca_{symbol}.json").write_text(json.dumps(out), encoding="utf-8")
+    log.info("DCA %s: nạp $%.0f (%d lần): giá trị cuối grid $%.1f (%+.1f%%), grid+re-range $%.1f (%+.1f%%), DCA B&H $%.1f (%+.1f%%)", symbol, inv, out["deposits"],
+             G[-1], 100 * out["grid"]["roi"], R[-1], 100 * out["rerange"]["roi"], B[-1], 100 * out["bh"]["roi"])
+    return out
+
+
 # --- STEP 9: pipeline đầy đủ ---
 def run_final(symbol, tf, df, fee, train, test, step, window, max_grids=MAX_GRIDS):
     """Walk-forward + CI + tham số khuyến nghị cho một cặp. Trả (dòng summary, chuỗi equity OOS)."""
@@ -807,6 +894,9 @@ def main():
     ap.add_argument("--min-dl", type=float, default=MIN_DL, help="phủ ít nhất dl phía dưới giá đầu (0 = tắt)")
     ap.add_argument("--min-range", type=float, default=MIN_RANGE, help="tổng độ rộng dl + dh tối thiểu (0 = tắt)")
     ap.add_argument("--min-grids", type=int, default=MIN_N, help="số lưới tối thiểu (0 = tắt)")
+    ap.add_argument("--dca", action="store_true", help="DCA mỗi đầu tháng: grid vs grid+re-range vs DCA Buy & Hold (ghi results/dca_{SYMBOL}.json)")
+    ap.add_argument("--dca-amount", type=float, default=DCA_AMOUNT, help="USD nạp mỗi tháng (và vốn đầu)")
+    ap.add_argument("--min-order", type=float, default=MIN_ORDER_USD, help="giá trị tối thiểu của mỗi lệnh grid (USD)")
     ap.add_argument("--ab", action="store_true", help="so sánh có ràng buộc và không ràng buộc (ghi results/ab_{SYMBOL}.json)")
     ap.add_argument("--objective", choices=OBJECTIVES, default=OBJECTIVE,
                     help="chỉ số tối ưu (mặc định return = lợi suất thuần); Sharpe/Sortino/Calmar vẫn được báo cáo để tham khảo")
@@ -824,12 +914,13 @@ def main():
     globals()["SELECT_DAYS"] = a.select
     globals()["OBJECTIVE"] = a.objective
     globals()["MIN_DL"], globals()["MIN_RANGE"], globals()["MIN_N"] = a.min_dl, a.min_range, a.min_grids
+    globals()["MIN_ORDER_USD"] = a.min_order
     globals()["JOBS"] = max(1, min(a.jobs, 8))
     LOG_PATH.parent.mkdir(exist_ok=True)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(process)d] %(message)s",  # PID để tách các lần chạy chồng nhau
                         handlers=[logging.StreamHandler(), logging.FileHandler(LOG_PATH, encoding="utf-8")])
     log.info("RUN args=%s", vars(a))
-    final = not (a.sweep or a.walkforward or a.stats or a.sensitivity or a.ab)
+    final = not (a.sweep or a.walkforward or a.stats or a.sensitivity or a.ab or a.dca)
     rows, series = [], {}
     for s in a.symbols:
         df = load_ohlcv(s, a.tf, a.days)
@@ -844,6 +935,8 @@ def main():
             run_stats(s, a.tf, df, a.fee, a.train, a.test, a.step, a.window, a.max_grids)
         if a.sensitivity:
             run_sensitivity(s, a.days, a.fee, max_grids=a.max_grids)
+        if a.dca or final:
+            run_dca(s, a.tf, df, a.fee, a.train, a.test, a.step, a.max_grids, a.dca_amount)
         if a.ab or final:
             run_ab(s, a.tf, df, a.fee, a.train, a.test, a.step, a.max_grids)
         if final:

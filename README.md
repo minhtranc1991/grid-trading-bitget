@@ -48,50 +48,42 @@ Kiểm chứng: test tính tay (lên-xuống qua k line; mỗi vòng 100.5→98.
 
 **DGT (STEP 7):** `dgt_equity(prices, dl, dh, n, mode, fee)` dựng lại lưới quanh giá mới khi giá phá low/high, vốn mới = equity hiện tại; phá trên thì đang toàn tiền mặt, phá dưới thì đang giữ toàn coin; trả phí tái cân bằng mỗi lần reset. Khi không bao giờ phá biên, DGT trùng khít grid thường (có test).
 
-**Bảng forward, Sharpe trung vị mỗi tuần (annualized, 72 fold/cặp):**
+**Mục tiêu tối ưu (`--objective`, mặc định `return`):** lợi suất thuần quy về một tuần (`ret_wk`) để so cửa sổ IS 4 tuần với OOS 1 tuần. Sharpe, Sortino, Calmar chỉ để tham khảo; có thể đổi sang `sharpe|sortino|calmar`. Xếp hạng trong sweep, tham số phẳng và tham số ổn định (`min(score IS, score OOS)`) đều theo mục tiêu này.
+
+**Bảng forward, lợi suất trung vị mỗi tuần (72 fold/cặp, mục tiêu = lợi suất):**
 
 | Chiến lược | BTC | ETH | PAXG | XAUT |
 |---|---|---|---|---|
-| Buy & Hold | −0.67 | 0.29 | 1.63 | 1.89 |
-| Grid cố định mặc định (±10%, n=20) | 0.31 | 1.22 | 2.10 | 2.17 |
-| Grid đỉnh nhọn (IS top-1) | 2.43 | 1.73 | 2.75 | 2.65 |
-| Grid phẳng | 2.15 | 2.13 | 3.31 | 3.24 |
-| **Grid ổn định (IS → OOS)** | **2.62** | 1.80 | 3.11 | 2.99 |
-| DGT (tham số ổn định) | −0.06 | 0.08 | 0.34 | 0.27 |
+| Buy & Hold | −0.62% | +0.10% | **+0.77%** | **+0.71%** |
+| Grid cố định mặc định (±10%, n=20) | +0.09% | **+0.49%** | +0.41% | +0.37% |
+| Grid đỉnh nhọn (IS top-1) | +0.08% | +0.14% | +0.12% | +0.09% |
+| Grid phẳng | +0.08% | +0.20% | +0.19% | +0.16% |
+| Grid ổn định (IS → OOS) | +0.06% | +0.14% | +0.12% | +0.12% |
+| DGT (tham số ổn định) | +0.02% | −0.07% | +0.03% | −0.01% |
 
-Sharpe IS của tham số ổn định 3.1–3.3 giảm còn 1.8–3.1 ở tuần forward (mức lạc quan của in-sample). Tỷ lệ tuần lãi (ổn định / B&H): BTC 61% / 47%, ETH 65% / 50%, PAXG 69% / 61%, XAUT 68% / 61%. Tham số ổn định không hơn phẳng ở ETH/PAXG/XAUT; chênh lệch nằm trong nhiễu. DGT thua grid cố định vì reset khóa vị thế ở giá phá biên và trả thêm phí.
+Sharpe forward trung vị: ổn định 2.12 / 1.58 / 3.20 / 2.65, đỉnh nhọn 2.23 / 1.45 / 2.98 / 2.35, B&H −0.67 / 0.29 / 1.63 / 1.89. Tỷ lệ tuần lãi (ổn định): 62% / 61% / 65% / 65%.
 
-**Thống kê (STEP 8):** `block_bootstrap_sharpe` (khối 1 ngày, 2000 lần) cho CI 95% của Sharpe OOS gộp các tuần forward; `deflated_sharpe` trả PSR(0) và DSR theo số tổ hợp thử (2200 crypto, 1408 vàng) và phương sai Sharpe giữa các thử nghiệm.
-Sharpe gộp (tham số ổn định) [CI 95%] vs B&H: BTC −0.66 [−2.31, 1.01] vs −0.34; ETH +0.12 [−1.50, 1.86] vs +0.23; PAXG −0.14 [−1.55, 1.31] vs +0.73; XAUT −0.26 [−1.72, 1.23] vs +0.74. CI của hiệu grid − B&H chứa 0 ở cả 4 cặp (vàng sát biên: [−2.85, 0.25] và [−2.99, 0.20]). PSR(0) 0.22–0.56; DSR 0.00–0.07.
-**Sharpe gộp (≈ 0) thấp hơn nhiều so với trung vị tuần (1.8–3.1):** đa số tuần lãi nhỏ (return trung vị +0.1%) nhưng vài tuần lỗ lớn (thấp nhất −7% đến −8%); phân phối lệch âm nên trung vị không phản ánh phần đuôi.
-Độ nhạy (Sharpe forward trung vị, tham số ổn định):
+**Phát hiện quan trọng: tối ưu lợi suất bị overfit nặng.** Lợi suất tuần trung vị của tham số ổn định ở IS là +1.03% / +1.92% / +0.67% / +0.61% nhưng chỉ còn +0.06% / +0.14% / +0.12% / +0.12% ở tuần forward (suy giảm ~80–95%). Đáng chú ý hơn, **lưới mặc định ±10%, n=20 không tối ưu còn cho lợi suất tuần cao hơn các cách chọn tối ưu** ở ETH, PAXG và XAUT. Tức là bước tối ưu hiện tại chưa tạo giá trị ngoài mẫu; cần cách chọn tham số bền vững hơn (xem `data/refs/papers/README.md`: PBO, vùng ổn định + cliff veto, tỷ lệ chống chịu OOS/IS).
 
-| Cấu hình | BTC | ETH | PAXG | XAUT |
-|---|---|---|---|---|
-| Phí 0.5× | 2.99 | 2.01 | 3.73 | 3.26 |
-| Phí 1× | 2.62 | 1.80 | 3.11 | 2.99 |
-| Phí 2× | 2.01 | 1.35 | 1.25 (60 fold) | 1.42 (61 fold) |
-| 5m | 3.44 | 2.54 | 2.85 | 2.97 |
-| 15m | 2.62 | 1.80 | 3.11 | 2.99 |
-| 1h | 1.78 | 1.31 | 1.77 | 1.50 |
+So với lần chạy mục tiêu Sharpe: lợi suất gộp BTC −17.8% → −40.1%, ETH −1.2% → −28.4%, PAXG −4.6% → +3.6%, XAUT −6.5% → +2.2%. Mục tiêu lợi suất làm kết quả crypto **xấu đi** (chọn lưới giữ nhiều coin rồi gặp thị trường giảm), vàng nhỉnh hơn nhưng vẫn thua B&H rất xa.
 
-Phí cao làm giảm ở mọi cặp, mạnh nhất ở vàng (phí 2× đòi bước ≥ 0.8% nên 11–12 tuần không còn tổ hợp nào qua bộ lọc và bị bỏ qua). Nến thưa hơn làm giảm Sharpe ở crypto (5m > 15m > 1h), phù hợp với việc dùng giá close bỏ sót các lần cắt line trong nến. Không cấu hình nào đảo kết luận chung.
+**Thống kê (STEP 8):** `block_bootstrap_sharpe` (khối 1 ngày, 2000 lần) cho CI 95% của Sharpe gộp các tuần forward; `deflated_sharpe` trả PSR(0) và DSR theo số tổ hợp thử (2200 crypto, 1408 vàng).
+Sharpe gộp (tham số ổn định) [CI 95%]: BTC −1.22 [−2.80, 0.46]; ETH −0.36 [−2.05, 1.40]; PAXG +0.23 [−1.25, 1.76]; XAUT +0.18 [−1.35, 1.75]. CI của hiệu grid − B&H chứa 0 ở cả 4 cặp (BTC [−2.33, 0.83], ETH [−2.47, 1.00], PAXG [−2.56, 0.45], XAUT [−2.68, 0.33]). Độ nhạy phí và khung nến xem mục 11 của báo cáo.
 
-**Tóm tắt cuối (STEP 9, `results/summary.csv`)**: IS 28d / OOS 7d / forward 7d, phí 0.1%, 72 fold/cặp, tham số ổn định.
+**Tóm tắt cuối (STEP 9, `results/summary.csv`)**: IS 28d / OOS 7d / forward 7d, phí 0.1%, 72 fold/cặp, mục tiêu lợi suất, tham số ổn định.
 
-| Cặp | Sharpe gộp [CI 95%] | Return gộp | B&H | MDD | MDD B&H | Tuần lãi | Khuyến nghị dl / dh / n / bước% / mode | Cờ |
-|---|---|---|---|---|---|---|---|---|
-| BTC | −0.66 [−2.31, 1.01] | −17.8% | −26.9% | −34.0% | −55.7% | 61% | 5% / 8% / 8 / 1.62% / geometric | UNSTABLE |
-| ETH | +0.12 [−1.50, 1.86] | −1.2% | −6.0% | −36.3% | −71.4% | 65% | 25% / 5% / 20 / 1.70% / geometric | UNSTABLE |
-| PAXG | −0.14 [−1.55, 1.31] | −4.6% | +23.9% | −20.7% | −30.8% | 69% | 8% / 0.25% / 8 / 1.08% / geometric | UNSTABLE |
-| XAUT | −0.26 [−1.72, 1.23] | −6.5% | +23.6% | −19.5% | −30.5% | 68% | 8% / 0.25% / 8 / 1.08% / geometric | UNSTABLE |
+| Cặp | Return gộp | B&H | MDD | MDD B&H | Sharpe gộp [CI 95%] | Sortino (grid / B&H) | Calmar (grid / B&H) | Tuần lãi | Khuyến nghị dl / dh / n / bước% / mode |
+|---|---|---|---|---|---|---|---|---|---|
+| BTC | −40.1% | −26.9% | −48.6% | −55.7% | −1.22 [−2.80, 0.46] | −1.69 / −0.48 | −0.60 / −0.35 | 62% | 2% / 18% / 8 / 2.35% / geometric |
+| ETH | −28.4% | −6.0% | −53.9% | −71.4% | −0.36 [−2.05, 1.40] | −0.51 / +0.34 | −0.38 / −0.06 | 61% | 5% / 12% / 8 / 1.90% / arithmetic |
+| PAXG | +3.6% | +23.9% | −20.6% | −30.8% | +0.23 [−1.25, 1.76] | +0.32 / +1.00 | +0.13 / +0.56 | 65% | 8% / 0.5% / 8 / 1.11% / geometric |
+| XAUT | +2.2% | +23.6% | −21.1% | −30.5% | +0.18 [−1.35, 1.75] | +0.24 / +1.02 | +0.08 / +0.56 | 65% | 8% / 0.5% / 10 / 0.89% / geometric |
 
-**Kết luận (trên lõi đã sửa):**
-- Grid **giảm drawdown rõ rệt** (MDD forward thấp hơn B&H ở cả 4 cặp) và **lãi ở đa số tuần** (61–69% so với 47–61% của B&H).
-- Trong giai đoạn thị trường giảm (BTC/ETH) grid lỗ ít hơn B&H; trong giai đoạn vàng tăng (+24%) grid **thua B&H nhiều** vì bán sớm khi giá lên.
-- **Chưa có bằng chứng thống kê về edge:** CI 95% của Sharpe gộp chứa 0 ở cả 4 cặp, CI của hiệu so với B&H cũng chứa 0; DSR thấp.
-- **Range bị tối ưu lệch rất mạnh:** `dh` trung vị chỉ 1.3–2% trong khi `dl` 5–25% (khuyến nghị vàng là `dh` = 0.25%, giá trị nhỏ nhất của không gian tìm kiếm). Lưới chủ yếu mua khi giá giảm và bán nhanh khi giá nhích lên, nên bỏ lỡ đà tăng. Bộ lọc bước chưa chặn kiểu range này (chưa có ràng buộc độ rộng/dh tối thiểu).
-- Tham số khuyến nghị chỉ để thử nghiệm: cờ UNSTABLE, tham số đổi nhiều giữa các tuần.
+**Kết luận (trên lõi đã sửa, mục tiêu lợi suất):**
+- **Grid không vượt giữ coin về lợi nhuận ở cả 4 cặp**; ở BTC và ETH còn lỗ nhiều hơn B&H. Chỉ còn lợi thế là drawdown nhỏ hơn (MDD giảm ~7–18 điểm %).
+- **Chưa có bằng chứng thống kê về edge:** CI 95% của Sharpe gộp chứa 0 ở cả 4 cặp, CI của hiệu so với B&H cũng chứa 0.
+- **Vấn đề nằm ở bước chọn tham số**, không ở mô phỏng: tham số tối ưu theo lợi suất suy giảm ~80–95% từ IS sang forward và kém cả lưới mặc định chưa tối ưu.
+- Range khuyến nghị cho vàng vẫn rất lệch (`dh` = 0.5%); tham số cờ UNSTABLE ở cả 4 cặp. Chỉ để thử nghiệm.
 
 **Trần số lưới:** `--max-grids N` (mặc định `MAX_GRIDS = 100`, cần xác minh trong app Bitget) lọc `n ≤ N` ở mọi bước (sweep, walk-forward, stats, pipeline cuối). Không gian tìm kiếm quét `n ∈ {4, 6, 8, 10, 15, 20, 30, 40, 60, 80, 100}`; `n` khuyến nghị hiện là 6–20, nên trần 100 không phải ràng buộc đang cắn.
 

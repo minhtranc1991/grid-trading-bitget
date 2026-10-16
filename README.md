@@ -78,9 +78,13 @@ Lưới mặc định ±10%, n=20 để so sánh (lưới / vị thế / tổng 
 | Cặp | Return gộp | B&H | MDD | MDD B&H | Sharpe gộp [CI 95%] | Tuần lãi | Khuyến nghị dl / dh / n / bước% / mode |
 |---|---|---|---|---|---|---|---|
 | BTC | −41.0% | −26.9% | −48.8% | −55.7% | −1.26 [−2.83, 0.35] | 60% | 2% / 12% / 8 / 1.56% / arithmetic |
-| ETH | −44.2% | −6.0% | −59.2% | −71.4% | −0.79 [−2.40, 0.91] | 65% | 3% / 2% / 4 / 1.26% / geometric |
-| PAXG | −16.1% | +23.9% | −25.7% | −30.8% | −0.63 [−2.05, 0.79] | 65% | 2% / 0.5% / 4 / 0.62% / arithmetic (UNSTABLE) |
-| XAUT | −15.4% | +23.6% | −26.5% | −30.5% | −0.63 [−2.10, 0.82] | 68% | 1.5% / 0.5% / 4 / 0.50% / geometric |
+| ETH | −44.2% | −6.0% | −59.2% | −71.4% | −0.79 [−2.40, 0.91] | 65% | 5% / 8% / 6 / 2.16% / geometric |
+| PAXG | −16.1% | +23.9% | −25.7% | −30.8% | −0.63 [−2.05, 0.79] | 65% | 2% / 1.5% / 4 / 0.88% / geometric (UNSTABLE) |
+| XAUT | −15.4% | +23.6% | −26.5% | −30.5% | −0.63 [−2.10, 0.82] | 68% | 1.5% / 1% / 4 / 0.62% / arithmetic |
+
+Cột khuyến nghị tính trên dữ liệu mới nhất nên **đổi theo từng lần chạy** (vài giờ sau ETH đổi từ 3% / 2% / 4 sang 5% / 8% / 6): thêm một dấu hiệu tham số chưa bền.
+
+**Giả định về reset lưới (quan trọng):** mỗi tuần forward là một lưới **cố định**, đặt tại giá đầu tuần và giữ nguyên đến hết tuần; **không có reset giữa tuần và không có cắt lỗ**. Khi giá giảm mạnh ra khỏi biên dưới, lưới đã mua đủ các slot (đầy vị thế) và đứng yên, chịu toàn bộ phần giảm còn lại của tuần; sang tuần sau lưới mới mới được dựng quanh giá mới (vốn nối tiếp theo equity, giả định thanh lý vị thế cuối tuần ở giá đóng cửa không phí bán, chỉ tính phí mua cho vị thế mới). Phương án reset khi phá biên (DGT) có trong mã và cho kết quả **tệ hơn** (lợi suất tuần trung bình BTC −1.27% so với −0.68%, ETH −1.87% so với −0.69%, PAXG −0.76% so với −0.22%, XAUT −0.74% so với −0.21%) vì reset khóa lỗ ở giá phá biên rồi trả thêm phí. Tuần lỗ trên 3%: BTC 12/72, ETH 14/72, PAXG 8/72, XAUT 7/72; tuần tệ nhất −11.5%, −17.0%, −10.0%, −9.4%.
 
 **Kết luận (trên lõi đã sửa, mục tiêu lợi nhuận lưới):**
 - Lưới **tạo ra lợi nhuận chênh lệch giá thật** (dương ở 4/4 cặp), nhưng phần vị thế chưa ghép đang ăn hết và hơn thế; tổng không vượt B&H ở cặp nào về lợi nhuận gộp.
